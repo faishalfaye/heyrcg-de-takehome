@@ -1,0 +1,46 @@
+config {
+  type: "view",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "Every raw row that does NOT reach the mart, with the reason, and every row that was repaired, with the repair. Answers 'what did you drop, flag or quarantine?' with one query: SELECT source_name, action, reason, COUNT(*) FROM heyrcg_stg.stg_quarantine GROUP BY 1,2,3."
+}
+
+-- Rows kept out of the mart --------------------------------------------------------------
+SELECT 'customers' AS source_name, 'QUARANTINED' AS action, quarantine_reason AS reason,
+       source_file, source_row, customer_id AS business_key
+FROM ${ref("stg_customers")} WHERE quarantine_reason IS NOT NULL
+UNION ALL
+SELECT 'customers', 'DUPLICATE_REMOVED', 'SAME_CUSTOMER_ID_IN_INITIAL_DUMP', c.source_file, c.source_row, c.customer_id
+FROM ${ref("stg_customers")} AS c
+WHERE c.is_snapshot_row AND c.quarantine_reason IS NULL
+  AND NOT EXISTS (SELECT 1 FROM ${ref("stg_customers_snapshot")} AS s
+                  WHERE s.source_file = c.source_file AND s.source_row = c.source_row)
+UNION ALL
+SELECT 'bookings', 'QUARANTINED', quarantine_reason, source_file, source_row, booking_id
+FROM ${ref("stg_bookings")} WHERE quarantine_reason IS NOT NULL
+UNION ALL
+SELECT 'pos_transactions', 'QUARANTINED', quarantine_reason, source_file, source_row, pos_line_id
+FROM ${ref("stg_pos_transactions")} WHERE quarantine_reason IS NOT NULL
+UNION ALL
+SELECT 'pos_transactions', 'DUPLICATE_REMOVED', 'EXACT_COPY_OF_EARLIER_ROW', source_file, source_row, pos_line_id
+FROM ${ref("stg_pos_transactions")} WHERE duplicate_rank > 1
+
+-- Rows that reach the mart after a documented repair ----------------------------------------
+UNION ALL
+SELECT 'customers', 'FLAGGED', 'EMAIL_INVALID_SET_TO_NULL', source_file, source_row, customer_id
+FROM ${ref("stg_customers")} WHERE is_email_invalid AND quarantine_reason IS NULL
+UNION ALL
+SELECT 'bookings', 'FLAGGED', date_fix, source_file, source_row, booking_id
+FROM ${ref("stg_bookings")} WHERE date_fix IS NOT NULL AND quarantine_reason IS NULL
+UNION ALL
+SELECT 'bookings', 'FLAGGED', 'REVENUE_DERIVED_FROM_RATE', source_file, source_row, booking_id
+FROM ${ref("stg_bookings")} WHERE is_revenue_derived AND quarantine_reason IS NULL
+UNION ALL
+SELECT 'pos_transactions', 'FLAGGED', 'HOTEL_FILLED_FROM_OUTLET', source_file, source_row, pos_line_id
+FROM ${ref("stg_pos_transactions")} WHERE is_hotel_inferred AND quarantine_reason IS NULL AND duplicate_rank = 1
+UNION ALL
+SELECT 'pos_transactions', 'FLAGGED', 'CATEGORY_FILLED_FROM_ITEM', source_file, source_row, pos_line_id
+FROM ${ref("stg_pos_transactions")} WHERE is_category_inferred AND quarantine_reason IS NULL AND duplicate_rank = 1
+UNION ALL
+SELECT 'pos_transactions', 'FLAGGED', 'UNIT_PRICE_DERIVED_FROM_TOTAL', source_file, source_row, pos_line_id
+FROM ${ref("stg_pos_transactions")} WHERE is_unit_price_derived AND quarantine_reason IS NULL AND duplicate_rank = 1

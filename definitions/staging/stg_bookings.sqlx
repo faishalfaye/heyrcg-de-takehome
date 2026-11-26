@@ -1,0 +1,122 @@
+config {
+  type: "view",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "PMS booking rows (initial file AND every delta file), cleaned, one output row per raw row. Rows are never dropped here: unusable rows get a quarantine_reason, repairable rows get a flag (date_fix, is_revenue_derived).",
+  columns: {
+    is_snapshot_row: "TRUE for rows from raw_bookings.csv (no updated_at).",
+    row_ts: "updated_at for delta rows, snapshot_ts for the initial file.",
+    date_fix: "NULL, or how a check-out-before-check-in row was repaired: DATES_SWAPPED or CHECKOUT_RECOMPUTED.",
+    room_revenue_idr: "TotalRevenue_IDR from the PMS. If empty: RatePerNight x nights x PMS exchange rate (is_revenue_derived = TRUE).",
+    recognised_room_revenue_idr: "Revenue that counts in reports: 0 for CANCELLED and NO_SHOW (ASSUMPTION K5), else room_revenue_idr.",
+    row_hash: "SHA-256 of all business columns. Used to tell a real change from a resend."
+  }
+}
+
+WITH typed AS (
+  SELECT
+    _source_file AS source_file,
+    _source_row  AS source_row,
+    _loaded_at   AS loaded_at,
+    NULLIF(UPPER(TRIM(BookingID)), '') AS booking_id,
+    TRIM(hotel_name) AS hotel_name,
+    NULLIF(TRIM(RoomType), '') AS room_type,
+    NULLIF(UPPER(TRIM(customer_id)), '') AS customer_id,
+    SAFE.PARSE_DATE('%Y-%m-%d', TRIM(CheckInDate))    AS check_in_raw,
+    SAFE.PARSE_DATE('%Y-%m-%d', TRIM(check_out_date)) AS check_out_raw,
+    SAFE_CAST(TRIM(nights) AS INT64) AS nights,
+    LOWER(TRIM(booking_status)) AS status_key,
+    TRIM(booking_status) AS booking_status_raw,
+    NULLIF(TRIM(channel), '') AS channel,
+    NULLIF(TRIM(BookingSource), '') AS booking_source,
+    SAFE_CAST(NULLIF(TRIM(RatePerNight), '') AS NUMERIC) AS rate_per_night,
+    UPPER(TRIM(Currency)) AS currency,
+    SAFE_CAST(NULLIF(TRIM(TotalRevenue_IDR), '') AS NUMERIC) AS total_revenue_idr_src,
+    SAFE_CAST(NULLIF(TRIM(discount_pct), '') AS NUMERIC) AS discount_pct,
+    CASE LOWER(TRIM(is_loyalty_member))
+      WHEN '1' THEN TRUE  WHEN 'true' THEN TRUE  WHEN 'yes' THEN TRUE
+      WHEN '0' THEN FALSE WHEN 'false' THEN FALSE WHEN 'no' THEN FALSE
+    END AS is_loyalty_member,                                   -- '' stays NULL = unknown
+    SAFE.PARSE_DATE('%Y-%m-%d', TRIM(created_at)) AS booking_created_date,
+    NULLIF(TRIM(updated_at), '') AS updated_at_raw,
+    SAFE.PARSE_DATETIME('%Y-%m-%d %H:%M:%S', TRIM(updated_at)) AS updated_at
+  FROM ${ref(constants.RAW, "bookings")}
+),
+
+enriched AS (
+  SELECT
+    t.*,
+    s.booking_status,
+    h.hotel_code,
+    fx.idr_per_unit,
+    -- 122 rows have check-out before check-in. nights always agrees with the revenue
+    -- (revenue = rate x nights), so we trust nights:
+    --   * if the gap equals nights, the two dates were swapped -> swap them back
+    --   * otherwise keep check-in and recompute check-out = check-in + nights
+    CASE
+      WHEN t.check_out_raw < t.check_in_raw
+           AND DATE_DIFF(t.check_in_raw, t.check_out_raw, DAY) = t.nights THEN 'DATES_SWAPPED'
+      WHEN t.check_out_raw < t.check_in_raw                                 THEN 'CHECKOUT_RECOMPUTED'
+    END AS date_fix
+  FROM typed AS t
+  LEFT JOIN ${ref("ref_booking_status")} AS s ON s.status_key = t.status_key
+  LEFT JOIN ${ref("ref_hotel")}          AS h ON h.hotel_name = t.hotel_name
+  LEFT JOIN ${ref("ref_fx_rate")}        AS fx ON fx.currency = t.currency
+),
+
+final AS (
+  SELECT
+    source_file,
+    source_row,
+    loaded_at,
+    booking_id,
+    hotel_code,
+    hotel_name,
+    room_type,
+    customer_id,
+    IF(date_fix = 'DATES_SWAPPED', check_out_raw, check_in_raw) AS check_in_date,
+    CASE date_fix
+      WHEN 'DATES_SWAPPED'       THEN check_in_raw
+      WHEN 'CHECKOUT_RECOMPUTED' THEN DATE_ADD(check_in_raw, INTERVAL nights DAY)
+      ELSE check_out_raw
+    END AS check_out_date,
+    nights,
+    booking_status,
+    booking_status_raw,
+    channel,
+    booking_source,
+    rate_per_night,
+    currency,
+    discount_pct,
+    is_loyalty_member,
+    booking_created_date,
+    -- TotalRevenue_IDR is the PMS's own number (see ASSUMPTION K4). We only calculate it
+    -- when it is missing, with the same formula the PMS used for the initial load.
+    COALESCE(total_revenue_idr_src, ROUND(rate_per_night * nights * idr_per_unit, 2)) AS room_revenue_idr,
+    total_revenue_idr_src IS NULL AS is_revenue_derived,
+    date_fix,
+    updated_at_raw IS NULL AS is_snapshot_row,
+    COALESCE(updated_at, ${constants.SNAPSHOT_TS}) AS row_ts,
+    CASE
+      WHEN booking_id IS NULL                                  THEN 'MISSING_BOOKING_ID'
+      WHEN check_in_raw IS NULL OR check_out_raw IS NULL       THEN 'INVALID_STAY_DATE'
+      WHEN nights IS NULL OR nights <= 0                       THEN 'INVALID_NIGHTS'
+      WHEN booking_status IS NULL                              THEN 'UNKNOWN_STATUS'
+      WHEN hotel_code IS NULL                                  THEN 'UNKNOWN_HOTEL'
+      WHEN idr_per_unit IS NULL                                THEN 'UNKNOWN_CURRENCY'
+      WHEN total_revenue_idr_src IS NULL AND rate_per_night IS NULL THEN 'NO_REVENUE_SOURCE'
+      WHEN booking_created_date IS NULL                        THEN 'INVALID_CREATED_AT'
+      WHEN updated_at_raw IS NOT NULL AND updated_at IS NULL   THEN 'INVALID_UPDATED_AT'
+    END AS quarantine_reason
+  FROM enriched
+)
+
+SELECT
+  *,
+  IF(booking_status IN ${constants.NON_REVENUE_STATUSES}, 0, room_revenue_idr) AS recognised_room_revenue_idr,
+  TO_HEX(SHA256(TO_JSON_STRING(STRUCT(
+    hotel_code, room_type, customer_id, check_in_date, check_out_date, nights, booking_status,
+    channel, booking_source, rate_per_night, currency, discount_pct, is_loyalty_member,
+    booking_created_date, room_revenue_idr, is_revenue_derived, date_fix
+  )))) AS row_hash
+FROM final

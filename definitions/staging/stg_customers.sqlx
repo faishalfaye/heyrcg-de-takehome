@@ -1,0 +1,69 @@
+config {
+  type: "view",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "CRM rows (initial dump AND every delta file), cleaned, one output row per raw row. Nothing is dropped here: invalid rows get a quarantine_reason. Deduplication happens in stg_customers_snapshot (initial dump) and in the customer change log (deltas).",
+  columns: {
+    is_snapshot_row: "TRUE for rows from the initial CRM dump (they have no updated_at).",
+    row_ts: "When this version of the customer was true in the CRM: updated_at for delta rows, the extraction time (snapshot_ts) for the initial dump.",
+    email: "Trimmed, lower-cased, inner spaces replaced by '.', then validated. NULL if empty or invalid (see is_email_invalid).",
+    loyalty_tier: "Bronze / Silver / Gold / Platinum, or NULL (= the customer has no tier).",
+    row_hash: "SHA-256 of the business attributes. Two rows with the same hash carry the same information.",
+    quarantine_reason: "NULL = usable row. Otherwise the reason it is kept out of the mart."
+  }
+}
+
+WITH typed AS (
+  SELECT
+    _source_file AS source_file,
+    _source_row  AS source_row,
+    _loaded_at   AS loaded_at,
+    NULLIF(UPPER(TRIM(customer_id)), '') AS customer_id,
+    NULLIF(TRIM(full_name), '') AS full_name,
+    -- 'customer 2@hotmail.com' -> 'customer.2@hotmail.com'. Evidence: the CRM's own delta
+    -- row for CUST00002 shows exactly this correction.
+    REGEXP_REPLACE(LOWER(TRIM(email)), r'\s+', '.') AS email_candidate,
+    NULLIF(TRIM(phone), '') AS phone,                 -- kept as STRING: leading 0 matters
+    NULLIF(TRIM(city), '') AS city,
+    NULLIF(TRIM(nationality), '') AS nationality,
+    NULLIF(INITCAP(TRIM(loyalty_tier)), '') AS loyalty_tier, -- 'gold', 'SILVER' -> 'Gold', 'Silver'
+    NULLIF(TRIM(joined_date), '') AS joined_date_raw,
+    NULLIF(TRIM(updated_at), '') AS updated_at_raw
+  FROM ${ref(constants.RAW, "customers")}
+),
+
+cleaned AS (
+  SELECT
+    * EXCEPT (email_candidate),
+    IF(REGEXP_CONTAINS(email_candidate, ${constants.EMAIL_RE}), email_candidate, NULL) AS email,
+    email_candidate != '' AND NOT REGEXP_CONTAINS(email_candidate, ${constants.EMAIL_RE}) AS is_email_invalid,
+    SAFE.PARSE_DATE('%Y-%m-%d', joined_date_raw) AS joined_date,
+    SAFE.PARSE_DATETIME('%Y-%m-%d %H:%M:%S', updated_at_raw) AS updated_at
+  FROM typed
+)
+
+SELECT
+  source_file,
+  source_row,
+  loaded_at,
+  customer_id,
+  full_name,
+  email,
+  is_email_invalid,
+  phone,
+  city,
+  nationality,
+  loyalty_tier,
+  joined_date,
+  updated_at_raw IS NULL AS is_snapshot_row,
+  COALESCE(updated_at, ${constants.SNAPSHOT_TS}) AS row_ts,
+  TO_HEX(SHA256(TO_JSON_STRING(STRUCT(
+    full_name, email, phone, city, nationality, joined_date, loyalty_tier
+  )))) AS row_hash,
+  CASE
+    WHEN customer_id IS NULL OR NOT REGEXP_CONTAINS(customer_id, r'^CUST[0-9]+$') THEN 'INVALID_CUSTOMER_ID'
+    WHEN loyalty_tier IS NOT NULL
+         AND loyalty_tier NOT IN ('Bronze', 'Silver', 'Gold', 'Platinum')     THEN 'UNKNOWN_LOYALTY_TIER'
+    WHEN updated_at_raw IS NOT NULL AND updated_at IS NULL                   THEN 'INVALID_UPDATED_AT'
+  END AS quarantine_reason
+FROM cleaned

@@ -1,0 +1,19 @@
+config {
+  type: "table",
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "One row per hotel. hotel_key = FARM_FINGERPRINT(hotel_code): deterministic, so a rebuild gives the same keys. -1 = unknown hotel. SCD Type 1 (we have no hotel attributes that change over time).",
+  assertions: { uniqueKey: ["hotel_key"], nonNull: ["hotel_key", "hotel_code"] }
+}
+
+SELECT
+  FARM_FINGERPRINT(hotel_code) AS hotel_key,
+  hotel_code,
+  hotel_name,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM ${ref("ref_hotel")}
+
+UNION ALL
+
+SELECT -1, 'UNKNOWN', 'Unknown hotel', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()

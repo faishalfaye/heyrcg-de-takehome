@@ -1,0 +1,49 @@
+config {
+  type: "assertion",
+  tags: ["incremental"],
+  description: "The strongest single check on Part 3: what the incremental machinery produced (watermark + MERGE + guard) must equal a naive full recompute from staging (for each booking take its newest usable row, no watermark, no MERGE). A full recompute naturally ignores the stale BKG-00012 row because the initial snapshot is newer. Any difference is returned with both values, including March revenue per hotel."
+}
+
+WITH recomputed AS (
+  SELECT booking_id, booking_status, check_in_date, nights, recognised_room_revenue_idr, hotel_code
+  FROM ${ref("stg_bookings")}
+  WHERE quarantine_reason IS NULL
+    AND (is_snapshot_row OR row_ts > ${constants.SNAPSHOT_TS})
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY booking_id ORDER BY row_ts DESC, row_hash) = 1
+),
+mart AS (
+  SELECT f.booking_id, f.booking_status, f.check_in_date, f.nights, f.recognised_room_revenue_idr, h.hotel_code
+  FROM ${ref("fact_bookings")} AS f
+  JOIN ${ref("dim_hotel")} AS h USING (hotel_key)
+)
+SELECT
+  COALESCE(r.booking_id, m.booking_id) AS item,
+  FORMAT('recompute=%t | mart=%t',
+         STRUCT(r.booking_status, r.check_in_date, r.nights, r.recognised_room_revenue_idr),
+         STRUCT(m.booking_status, m.check_in_date, m.nights, m.recognised_room_revenue_idr)) AS problem
+FROM recomputed AS r
+FULL OUTER JOIN mart AS m ON m.booking_id = r.booking_id
+WHERE r.booking_id IS NULL OR m.booking_id IS NULL
+   OR r.booking_status != m.booking_status
+   OR r.check_in_date != m.check_in_date
+   OR r.nights != m.nights
+   OR r.recognised_room_revenue_idr != m.recognised_room_revenue_idr
+
+UNION ALL
+
+SELECT
+  CONCAT('March 2024 revenue ', hotel_code),
+  FORMAT('recompute=%t | mart=%t', r_rev, m_rev)
+FROM (
+  SELECT hotel_code,
+         SUM(IF(src = 'r', rev, 0)) AS r_rev,
+         SUM(IF(src = 'm', rev, 0)) AS m_rev
+  FROM (
+    SELECT 'r' AS src, hotel_code, recognised_room_revenue_idr AS rev, check_in_date FROM recomputed
+    UNION ALL
+    SELECT 'm', hotel_code, recognised_room_revenue_idr, check_in_date FROM mart
+  )
+  WHERE check_in_date BETWEEN '2024-03-01' AND '2024-03-31'
+  GROUP BY hotel_code
+)
+WHERE r_rev != m_rev

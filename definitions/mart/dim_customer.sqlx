@@ -1,0 +1,49 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "Customer dimension. SCD Type 2 on loyalty_tier, SCD Type 1 on everything else (docs/decisions.md D5). This file is the INITIAL build only; afterwards definitions/incremental/incremental_load.sqlx maintains it with MERGE. Rows: one per customer version + inferred members (customers seen in facts but not yet in the CRM, is_inferred = TRUE) + the unknown member (customer_key = -1)."
+}
+
+CREATE OR REPLACE TABLE ${self()}
+CLUSTER BY customer_id
+AS
+WITH
+${scd2.customerVersionCtes(ref("customer_change_log"), "TRUE")},
+
+-- Inferred members: a fact references a customer the CRM has not sent us yet.
+-- Instead of pointing the fact at "unknown" we create a placeholder row with the
+-- customer_id. When the CRM row arrives, the incremental load fills it in place (same key).
+inferred AS (
+  SELECT DISTINCT customer_id
+  FROM (
+    SELECT customer_id FROM ${ref("stg_bookings")}
+    WHERE is_snapshot_row AND quarantine_reason IS NULL AND customer_id IS NOT NULL
+    UNION ALL
+    SELECT customer_id FROM ${ref("stg_pos_transactions")}
+    WHERE quarantine_reason IS NULL AND duplicate_rank = 1 AND customer_id IS NOT NULL
+  )
+  WHERE customer_id NOT IN (SELECT customer_id FROM customer_versions)
+),
+
+all_rows AS (
+  SELECT * FROM customer_versions
+  UNION ALL
+  SELECT
+    FARM_FINGERPRINT(CONCAT(customer_id, '|', FORMAT_DATETIME('%F %T', ${constants.LOW_DT}))),
+    customer_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    ${constants.LOW_DT}, ${constants.HIGH_DT}, TRUE, TRUE, NULL
+  FROM inferred
+  UNION ALL
+  SELECT
+    -1, 'UNKNOWN', 'Unknown customer', NULL, NULL, NULL, NULL, NULL, NULL,
+    ${constants.LOW_DT}, ${constants.HIGH_DT}, TRUE, FALSE, NULL
+)
+
+SELECT
+  *,
+  ${scd2.CUSTOMER_ROW_HASH} AS row_hash,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM all_rows

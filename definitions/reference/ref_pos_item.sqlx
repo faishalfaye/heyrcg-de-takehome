@@ -1,0 +1,30 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "Maps raw POS item names to one clean name and its category. item_key = item name lower-cased with everything except letters and digits removed, so 'Nasi Goreng', 'NASI GORENG', 'nasi_goreng' and 'NasiGoreng' share one key. Category comes from the source data: every item has exactly one non-empty category there.",
+  assertions: { uniqueKey: ["item_key"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('beefburger' AS item_key, 'Beef Burger' AS item_name, 'Food' AS category),
+  ('caesarsalad',       'Caesar Salad',        'Food'),
+  ('clubsandwich',      'Club Sandwich',       'Food'),
+  ('fishchips',         'Fish & Chips',        'Food'),
+  ('nasigoreng',        'Nasi Goreng',         'Food'),
+  ('nasigorengspesial', 'Nasi Goreng Spesial', 'Food'),      -- a different dish from Nasi Goreng (decision D3)
+  ('pastacarbonara',    'Pasta Carbonara',     'Food'),
+  ('bintangbeer',       'Bintang Beer',        'Beverage'),
+  ('cocktail',          'Cocktail',            'Beverage'),
+  ('coctail',           'Cocktail',            'Beverage'),  -- typo
+  ('coffee',            'Coffee',              'Beverage'),
+  ('coffeehot',         'Coffee',              'Beverage'),
+  ('coffie',            'Coffee',              'Beverage'),  -- typo
+  ('kopi',              'Coffee',              'Beverage'),  -- Indonesian for coffee
+  ('freshjuice',        'Fresh Juice',         'Beverage'),
+  ('smoothie',          'Smoothie',            'Beverage'),
+  ('sparklingwater',    'Sparkling Water',     'Beverage'),
+  ('chocolatelavacake', 'Chocolate Lava Cake', 'Dessert'),
+  ('icecream',          'Ice Cream',           'Dessert'),
+  ('tiramisu',          'Tiramisu',            'Dessert')
+])

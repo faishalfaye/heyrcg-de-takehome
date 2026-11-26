@@ -1,0 +1,106 @@
+config {
+  type: "view",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "POS line items, cleaned, one output row per raw row. Duplicates are flagged (duplicate_rank > 1), not deleted, so the quarantine report can count them. Dedup key: pos_transaction_id. Each id is one line item, and all 340 repeated ids in the file are exact copies of the first row.",
+  columns: {
+    transaction_date: "Parsed by pattern. '-' dates are MM-DD-YYYY and '/' dates are DD/MM/YYYY: in this file the first number of a '-' date is never above 3, and the second number of a '/' date is never above 3 (Q1 data), so this is evidence, not a guess.",
+    total_amount_idr: "total_amount with 'IDR', thousands commas and spaces removed.",
+    duplicate_rank: "1 = the row we keep. 2+ = later copy of the same pos_transaction_id.",
+    is_hotel_inferred: "hotel_name was empty and was filled from the outlet (ref_outlet_hotel).",
+    is_category_inferred: "category was empty and was filled from the item (ref_pos_item)."
+  }
+}
+
+WITH typed AS (
+  SELECT
+    _source_file AS source_file,
+    _source_row  AS source_row,
+    _loaded_at   AS loaded_at,
+    NULLIF(UPPER(TRIM(pos_transaction_id)), '') AS pos_line_id,
+    TRIM(outlet_name) AS outlet_name,
+    NULLIF(TRIM(hotel_name), '') AS hotel_name_src,
+    TRIM(transaction_date) AS transaction_date_raw,
+    NULLIF(UPPER(TRIM(customer_id)), '') AS customer_id,      -- NULL = walk-in / not a known guest
+    TRIM(item_name) AS item_name_raw,
+    LOWER(REGEXP_REPLACE(item_name, r'[^A-Za-z0-9]', '')) AS item_key,
+    NULLIF(INITCAP(TRIM(category)), '') AS category_src,
+    SAFE_CAST(TRIM(quantity) AS INT64) AS quantity,
+    SAFE_CAST(NULLIF(TRIM(unit_price), '') AS NUMERIC) AS unit_price_src,
+    SAFE_CAST(NULLIF(REGEXP_REPLACE(UPPER(total_amount), r'IDR|,|\s', ''), '') AS NUMERIC) AS total_amount_idr,
+    TRIM(total_amount) AS total_amount_raw,
+    LOWER(REGEXP_REPLACE(payment_method, r'[^A-Za-z0-9]', '')) AS payment_key,
+    NULLIF(TRIM(staff_id), '') AS staff_id
+  FROM ${ref(constants.RAW, "pos_transactions")}
+),
+
+parsed AS (
+  SELECT
+    t.*,
+    CASE
+      WHEN REGEXP_CONTAINS(transaction_date_raw, r'^\d{4}-\d{2}-\d{2}$') THEN SAFE.PARSE_DATE('%Y-%m-%d', transaction_date_raw)
+      WHEN REGEXP_CONTAINS(transaction_date_raw, r'^\d{8}$')             THEN SAFE.PARSE_DATE('%Y%m%d', transaction_date_raw)
+      WHEN REGEXP_CONTAINS(transaction_date_raw, r'^\d{2}-\d{2}-\d{4}$') THEN SAFE.PARSE_DATE('%m-%d-%Y', transaction_date_raw)
+      WHEN REGEXP_CONTAINS(transaction_date_raw, r'^\d{2}/\d{2}/\d{4}$') THEN SAFE.PARSE_DATE('%d/%m/%Y', transaction_date_raw)
+      WHEN REGEXP_CONTAINS(transaction_date_raw, r'^\d{1,2} [A-Za-z]{3} \d{4}$') THEN SAFE.PARSE_DATE('%d %b %Y', transaction_date_raw)
+    END AS transaction_date,
+    COALESCE(t.hotel_name_src, oh.hotel_name) AS hotel_name,
+    it.item_name,
+    it.category AS item_category,
+    pm.payment_method,
+    pm.payment_type
+  FROM typed AS t
+  LEFT JOIN ${ref("ref_outlet_hotel")}   AS oh ON oh.outlet_name = t.outlet_name
+  LEFT JOIN ${ref("ref_pos_item")}       AS it ON it.item_key = t.item_key
+  LEFT JOIN ${ref("ref_payment_method")} AS pm ON pm.payment_key = t.payment_key
+),
+
+final AS (
+  SELECT
+    p.source_file,
+    p.source_row,
+    p.loaded_at,
+    p.pos_line_id,
+    p.outlet_name,
+    h.hotel_code,
+    p.hotel_name,
+    p.hotel_name_src IS NULL AS is_hotel_inferred,
+    p.transaction_date,
+    p.transaction_date_raw,
+    p.customer_id,
+    p.item_name,
+    p.item_name_raw,
+    COALESCE(p.category_src, p.item_category) AS category,
+    p.category_src IS NULL AS is_category_inferred,
+    p.quantity,
+    COALESCE(p.unit_price_src, SAFE_DIVIDE(p.total_amount_idr, p.quantity)) AS unit_price_idr,
+    p.unit_price_src IS NULL AS is_unit_price_derived,
+    p.total_amount_idr,
+    p.total_amount_raw,
+    p.payment_method,
+    p.payment_type,
+    p.staff_id,
+    -- flag only: the amount and the price disagree (0 rows in the sample, but cheap to watch)
+    p.unit_price_src IS NOT NULL AND p.total_amount_idr != p.unit_price_src * p.quantity AS is_amount_mismatch,
+    CASE
+      WHEN p.pos_line_id IS NULL                       THEN 'MISSING_POS_ID'
+      WHEN p.transaction_date IS NULL                  THEN 'INVALID_TRANSACTION_DATE'
+      WHEN p.total_amount_idr IS NULL                  THEN 'INVALID_TOTAL_AMOUNT'
+      WHEN p.quantity IS NULL OR p.quantity <= 0       THEN 'INVALID_QUANTITY'
+      WHEN p.item_name IS NULL                         THEN 'UNKNOWN_ITEM'
+      WHEN h.hotel_code IS NULL                        THEN 'UNKNOWN_HOTEL'
+      WHEN p.payment_method IS NULL                    THEN 'UNKNOWN_PAYMENT_METHOD'
+      WHEN p.category_src IS NOT NULL AND p.category_src != p.item_category THEN 'CATEGORY_CONFLICT'
+    END AS quarantine_reason
+  FROM parsed AS p
+  LEFT JOIN ${ref("ref_hotel")} AS h ON h.hotel_name = p.hotel_name
+)
+
+SELECT
+  *,
+  ROW_NUMBER() OVER (PARTITION BY pos_line_id ORDER BY source_file, source_row) AS duplicate_rank,
+  TO_HEX(SHA256(TO_JSON_STRING(STRUCT(
+    outlet_name, hotel_code, transaction_date, customer_id, item_name, category, quantity,
+    unit_price_idr, total_amount_idr, payment_method, staff_id
+  )))) AS row_hash
+FROM final

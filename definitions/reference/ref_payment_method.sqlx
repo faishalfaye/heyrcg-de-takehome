@@ -1,0 +1,16 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "Maps raw payment_method spellings (lower-cased, letters and digits only) to a clean method and a payment type.",
+  assertions: { uniqueKey: ["payment_key"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('cash' AS payment_key, 'CASH' AS payment_method, 'CASH' AS payment_type),
+  ('cc',         'CREDIT_CARD', 'CARD'),
+  ('creditcard', 'CREDIT_CARD', 'CARD'),
+  ('gopay',      'GOPAY',       'E_WALLET'),
+  ('ovo',        'OVO',         'E_WALLET'),
+  ('dana',       'DANA',        'E_WALLET')
+])

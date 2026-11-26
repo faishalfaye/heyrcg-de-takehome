@@ -1,0 +1,298 @@
+config {
+  type: "operations",
+  tags: ["incremental"],
+  description: "Daily incremental load of the customer and booking delta files into the mart. Everything happens in ONE BigQuery transaction: either every table (change log, dim_customer, fact_bookings, fact_pos_transactions, watermark, manifest, run log) is updated, or none is. That is what makes it safe to simply re-run after a failure. See docs/decisions.md D7-D11."
+}
+
+-- =============================================================================================
+-- 0. Variables
+--    Normal run: process rows newer than the stored watermark.
+--    Backfill run (var backfill_from set): process rows newer than that date instead. Safe,
+--    because dim_customer is rebuilt from the change log and fact_bookings only accepts rows
+--    newer than what it already has (source_updated_at guard).
+-- =============================================================================================
+DECLARE run_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP();
+DECLARE is_backfill BOOL DEFAULT ${constants.BACKFILL_FROM ? "TRUE" : "FALSE"};
+DECLARE stored_wm_customers DATETIME DEFAULT (SELECT watermark_ts FROM ${ref("etl_watermark")} WHERE source_name = 'customers');
+DECLARE stored_wm_bookings  DATETIME DEFAULT (SELECT watermark_ts FROM ${ref("etl_watermark")} WHERE source_name = 'bookings');
+DECLARE wm_customers DATETIME DEFAULT ${constants.BACKFILL_FROM || "stored_wm_customers"};
+DECLARE wm_bookings  DATETIME DEFAULT ${constants.BACKFILL_FROM || "stored_wm_bookings"};
+
+BEGIN
+  BEGIN TRANSACTION;
+
+  -- ===========================================================================================
+  -- 1. CUSTOMERS -> change log -> dim_customer (SCD2 on loyalty_tier, SCD1 on the rest)
+  -- ===========================================================================================
+
+  -- 1a. Delta rows newer than the watermark. Quarantined rows are read too (they still move
+  --     the watermark and are counted in the run log), but never reach the change log.
+  CREATE TEMP TABLE cust_candidates AS
+  SELECT *
+  FROM ${ref("stg_customers")}
+  WHERE NOT is_snapshot_row
+    AND row_ts > wm_customers;
+
+  -- 1b. Append accepted rows to the change log. A row we already have (same customer,
+  --     same timestamp, same content) is skipped, so a resent file adds nothing.
+  INSERT INTO ${ref("customer_change_log")}
+    (customer_id, full_name, email, phone, city, nationality, joined_date, loyalty_tier,
+     row_ts, row_hash, source_file, source_row, created_at, updated_at)
+  SELECT
+    customer_id, full_name, email, phone, city, nationality, joined_date, loyalty_tier,
+    row_ts, row_hash, source_file, source_row, run_ts, run_ts
+  FROM cust_candidates AS c
+  WHERE quarantine_reason IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM ${ref("customer_change_log")} AS l
+      WHERE l.customer_id = c.customer_id AND l.row_ts = c.row_ts AND l.row_hash = c.row_hash)
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY customer_id, row_ts, row_hash ORDER BY source_file, source_row) = 1;
+
+  -- 1c. Customers whose history must be rebuilt.
+  CREATE TEMP TABLE affected_customers AS
+  SELECT DISTINCT customer_id
+  FROM cust_candidates
+  WHERE quarantine_reason IS NULL;
+
+  -- 1d. Rebuild their versions from their FULL history (initial dump + every accepted delta
+  --     row), with the same function the initial load used. Several tier changes in one batch,
+  --     rows in the wrong order, and rows that change nothing are all handled here.
+  CREATE TEMP TABLE new_versions AS
+  WITH
+  ${scd2.customerVersionCtes(ref("customer_change_log"), "customer_id IN (SELECT customer_id FROM affected_customers)")}
+  SELECT *, ${scd2.CUSTOMER_ROW_HASH} AS row_hash
+  FROM customer_versions;
+
+  -- 1e. Compare with what dim_customer has now and label every row.
+  --     INSERT    new version (or brand-new customer)
+  --     UPDATE    existing version changed: the old current version gets its valid_to and
+  --               is_current = FALSE, or a Type 1 attribute changed, or an inferred member
+  --               is filled in with real CRM data
+  --     DELETE    a version that no longer exists in the rebuilt history (only after a backfill
+  --               inserts a row in the middle of a customer's history)
+  --     UNCHANGED nothing to do. This is what makes a second run a no-op.
+  CREATE TEMP TABLE cust_merge_source AS
+  WITH source_rows AS (
+    SELECT *, FALSE AS is_removed FROM new_versions
+    UNION ALL
+    SELECT d.* EXCEPT (created_at, updated_at), TRUE AS is_removed
+    FROM ${ref("dim_customer")} AS d
+    WHERE d.customer_id IN (SELECT customer_id FROM affected_customers)
+      AND d.customer_key NOT IN (SELECT customer_key FROM new_versions)
+  )
+  SELECT
+    s.*,
+    CASE
+      WHEN s.is_removed                THEN 'DELETE'
+      WHEN t.customer_key IS NULL      THEN 'INSERT'
+      WHEN t.row_hash != s.row_hash    THEN 'UPDATE'
+      ELSE 'UNCHANGED'
+    END AS change_type
+  FROM source_rows AS s
+  LEFT JOIN ${ref("dim_customer")} AS t ON t.customer_key = s.customer_key;
+
+  MERGE ${ref("dim_customer")} AS T
+  USING cust_merge_source AS S
+  ON T.customer_key = S.customer_key
+  WHEN MATCHED AND S.change_type = 'DELETE' THEN
+    DELETE
+  WHEN MATCHED AND S.change_type = 'UPDATE' THEN UPDATE SET
+    full_name = S.full_name, email = S.email, phone = S.phone, city = S.city,
+    nationality = S.nationality, joined_date = S.joined_date, loyalty_tier = S.loyalty_tier,
+    valid_from = S.valid_from, valid_to = S.valid_to, is_current = S.is_current,
+    is_inferred = S.is_inferred, source_updated_at = S.source_updated_at,
+    row_hash = S.row_hash, updated_at = run_ts
+  WHEN NOT MATCHED BY TARGET AND S.change_type = 'INSERT' THEN INSERT
+    (customer_key, customer_id, full_name, email, phone, city, nationality, joined_date,
+     loyalty_tier, valid_from, valid_to, is_current, is_inferred, source_updated_at, row_hash,
+     created_at, updated_at)
+  VALUES
+    (S.customer_key, S.customer_id, S.full_name, S.email, S.phone, S.city, S.nationality,
+     S.joined_date, S.loyalty_tier, S.valid_from, S.valid_to, S.is_current, S.is_inferred,
+     S.source_updated_at, S.row_hash, run_ts, run_ts);
+
+  -- ===========================================================================================
+  -- 2. BOOKINGS -> fact_bookings (MERGE on booking_id, never a rebuild)
+  -- ===========================================================================================
+
+  -- 2a. Delta rows newer than the watermark, then the usable ones, one row per booking:
+  --     the newest. (BKG-00002 arrives twice: 'confirmed' at 03-28 15:00 and 'cnx' at
+  --     03-29 09:12. We keep 'cnx'. Exact duplicates collapse to one row here too.)
+  CREATE TEMP TABLE book_candidates AS
+  SELECT *
+  FROM ${ref("stg_bookings")}
+  WHERE NOT is_snapshot_row
+    AND row_ts > wm_bookings;
+
+  CREATE TEMP TABLE book_batch AS
+  SELECT *
+  FROM book_candidates
+  WHERE quarantine_reason IS NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY booking_id ORDER BY row_ts DESC, row_hash) = 1;
+
+  -- 2b. Inferred members: bookings for customers the CRM has not sent (e.g. CUST19999).
+  INSERT INTO ${ref("dim_customer")}
+    (customer_key, customer_id, full_name, email, phone, city, nationality, joined_date,
+     loyalty_tier, valid_from, valid_to, is_current, is_inferred, source_updated_at, row_hash,
+     created_at, updated_at)
+  SELECT *, ${scd2.CUSTOMER_ROW_HASH}, run_ts, run_ts
+  FROM (
+    SELECT
+      FARM_FINGERPRINT(CONCAT(customer_id, '|', FORMAT_DATETIME('%F %T', ${constants.LOW_DT}))) AS customer_key,
+      customer_id,
+      CAST(NULL AS STRING) AS full_name, CAST(NULL AS STRING) AS email, CAST(NULL AS STRING) AS phone,
+      CAST(NULL AS STRING) AS city, CAST(NULL AS STRING) AS nationality, CAST(NULL AS DATE) AS joined_date,
+      CAST(NULL AS STRING) AS loyalty_tier,
+      ${constants.LOW_DT} AS valid_from, ${constants.HIGH_DT} AS valid_to,
+      TRUE AS is_current, TRUE AS is_inferred, CAST(NULL AS DATETIME) AS source_updated_at
+    FROM (SELECT DISTINCT customer_id FROM book_batch WHERE customer_id IS NOT NULL) AS b
+    WHERE NOT EXISTS (SELECT 1 FROM ${ref("dim_customer")} AS d WHERE d.customer_id = b.customer_id)
+  );
+
+  -- 2c. Look up surrogate keys and label every row.
+  --     INSERT        booking we have never seen
+  --     UPDATE        newer source row with different content
+  --     TOUCH         newer source row, same content: only source_updated_at moves forward
+  --     IGNORED_OLDER source row is not newer than what the fact already has (late or resent)
+  CREATE TEMP TABLE book_merge_source AS
+  WITH keyed AS (
+    SELECT
+      FARM_FINGERPRINT(b.booking_id) AS booking_key,
+      b.booking_id,
+      COALESCE(h.hotel_key, -1) AS hotel_key,
+      COALESCE(c.customer_key, -1) AS customer_key,
+      CAST(FORMAT_DATE('%Y%m%d', b.check_in_date) AS INT64) AS check_in_date_key,
+      CAST(FORMAT_DATE('%Y%m%d', b.check_out_date) AS INT64) AS check_out_date_key,
+      CAST(FORMAT_DATE('%Y%m%d', b.booking_created_date) AS INT64) AS booking_date_key,
+      b.check_in_date, b.booking_created_date, b.customer_id, b.room_type, b.channel,
+      b.booking_source, b.booking_status, b.currency, b.rate_per_night, b.nights,
+      b.discount_pct, b.is_loyalty_member, b.room_revenue_idr, b.recognised_room_revenue_idr,
+      b.is_revenue_derived, b.date_fix,
+      b.row_ts AS source_updated_at,
+      b.source_file,
+      b.row_hash
+    FROM book_batch AS b
+    LEFT JOIN ${ref("dim_hotel")} AS h ON h.hotel_code = b.hotel_code
+    LEFT JOIN ${ref("dim_customer")} AS c
+      ON  c.customer_id = b.customer_id
+      AND DATETIME(b.booking_created_date) >= c.valid_from
+      AND DATETIME(b.booking_created_date) <  c.valid_to
+  )
+  SELECT
+    k.*,
+    CASE
+      WHEN t.booking_id IS NULL                                                     THEN 'INSERT'
+      WHEN k.source_updated_at > t.source_updated_at AND k.row_hash != t.row_hash   THEN 'UPDATE'
+      WHEN k.source_updated_at > t.source_updated_at                                THEN 'TOUCH'
+      ELSE 'IGNORED_OLDER'
+    END AS change_type
+  FROM keyed AS k
+  LEFT JOIN ${ref("fact_bookings")} AS t ON t.booking_id = k.booking_id;
+
+  MERGE ${ref("fact_bookings")} AS T
+  USING book_merge_source AS S
+  ON T.booking_id = S.booking_id
+  WHEN MATCHED AND S.change_type IN ('UPDATE', 'TOUCH') THEN UPDATE SET
+    hotel_key = S.hotel_key, customer_key = S.customer_key,
+    check_in_date_key = S.check_in_date_key, check_out_date_key = S.check_out_date_key,
+    booking_date_key = S.booking_date_key, check_in_date = S.check_in_date,
+    booking_created_date = S.booking_created_date, customer_id = S.customer_id,
+    room_type = S.room_type, channel = S.channel, booking_source = S.booking_source,
+    booking_status = S.booking_status, currency = S.currency, rate_per_night = S.rate_per_night,
+    nights = S.nights, discount_pct = S.discount_pct, is_loyalty_member = S.is_loyalty_member,
+    room_revenue_idr = S.room_revenue_idr, recognised_room_revenue_idr = S.recognised_room_revenue_idr,
+    is_revenue_derived = S.is_revenue_derived, date_fix = S.date_fix,
+    source_updated_at = S.source_updated_at, source_file = S.source_file, row_hash = S.row_hash,
+    updated_at = IF(S.change_type = 'UPDATE', run_ts, T.updated_at)
+  WHEN NOT MATCHED BY TARGET AND S.change_type = 'INSERT' THEN INSERT
+    (booking_key, booking_id, hotel_key, customer_key, check_in_date_key, check_out_date_key,
+     booking_date_key, check_in_date, booking_created_date, customer_id, room_type, channel,
+     booking_source, booking_status, currency, rate_per_night, nights, discount_pct,
+     is_loyalty_member, room_revenue_idr, recognised_room_revenue_idr, is_revenue_derived,
+     date_fix, source_updated_at, source_file, row_hash, created_at, updated_at)
+  VALUES
+    (S.booking_key, S.booking_id, S.hotel_key, S.customer_key, S.check_in_date_key,
+     S.check_out_date_key, S.booking_date_key, S.check_in_date, S.booking_created_date,
+     S.customer_id, S.room_type, S.channel, S.booking_source, S.booking_status, S.currency,
+     S.rate_per_night, S.nights, S.discount_pct, S.is_loyalty_member, S.room_revenue_idr,
+     S.recognised_room_revenue_idr, S.is_revenue_derived, S.date_fix, S.source_updated_at,
+     S.source_file, S.row_hash, run_ts, run_ts);
+
+  -- ===========================================================================================
+  -- 3. Re-point facts of customers whose history changed, so every fact keeps pointing at the
+  --    version valid on its own date. Usually a no-op (new versions start after the facts),
+  --    but required after a backfill or when a customer's dates move.
+  -- ===========================================================================================
+  UPDATE ${ref("fact_bookings")} AS f
+  SET customer_key = d.customer_key, updated_at = run_ts
+  FROM ${ref("dim_customer")} AS d
+  WHERE d.customer_id = f.customer_id
+    AND DATETIME(f.booking_created_date) >= d.valid_from
+    AND DATETIME(f.booking_created_date) <  d.valid_to
+    AND f.customer_key != d.customer_key
+    AND f.customer_id IN (SELECT customer_id FROM affected_customers);
+
+  UPDATE ${ref("fact_pos_transactions")} AS f
+  SET customer_key = d.customer_key, updated_at = run_ts
+  FROM ${ref("dim_customer")} AS d
+  WHERE d.customer_id = f.customer_id
+    AND DATETIME(f.transaction_date) >= d.valid_from
+    AND DATETIME(f.transaction_date) <  d.valid_to
+    AND f.customer_key != d.customer_key
+    AND f.customer_id IN (SELECT customer_id FROM affected_customers);
+
+  -- ===========================================================================================
+  -- 4. Bookkeeping: watermarks (forward only), manifest, run log
+  -- ===========================================================================================
+  UPDATE ${ref("etl_watermark")}
+  SET watermark_ts = (SELECT MAX(row_ts) FROM cust_candidates), updated_at = run_ts
+  WHERE source_name = 'customers'
+    AND (SELECT MAX(row_ts) FROM cust_candidates) > watermark_ts;   -- NULL (empty batch) = no change
+
+  UPDATE ${ref("etl_watermark")}
+  SET watermark_ts = (SELECT MAX(row_ts) FROM book_candidates), updated_at = run_ts
+  WHERE source_name = 'bookings'
+    AND (SELECT MAX(row_ts) FROM book_candidates) > watermark_ts;
+
+  -- A delta file is "processed" once at least one of its rows was read by a run. A file that
+  -- stays unprocessed after a run held only rows older than the watermark: a late or stale
+  -- file. Find them with: SELECT * FROM heyrcg_raw.file_manifest WHERE processed_at IS NULL
+  UPDATE ${ref(constants.RAW, "file_manifest")}
+  SET processed_at = run_ts
+  WHERE processed_at IS NULL
+    AND file_name IN (SELECT source_file FROM cust_candidates
+                      UNION DISTINCT
+                      SELECT source_file FROM book_candidates);
+
+  INSERT INTO ${ref("etl_run_log")}
+  SELECT
+    run_ts, 'customers', stored_wm_customers,
+    (SELECT watermark_ts FROM ${ref("etl_watermark")} WHERE source_name = 'customers'),
+    is_backfill,
+    (SELECT COUNT(*) FROM cust_candidates),
+    (SELECT COUNTIF(quarantine_reason IS NOT NULL) FROM cust_candidates),
+    (SELECT COUNT(*) FROM affected_customers),
+    (SELECT COUNTIF(change_type = 'INSERT') FROM cust_merge_source),
+    (SELECT COUNTIF(change_type = 'UPDATE') FROM cust_merge_source),
+    (SELECT COUNTIF(change_type = 'DELETE') FROM cust_merge_source),
+    run_ts, run_ts
+  UNION ALL
+  SELECT
+    run_ts, 'bookings', stored_wm_bookings,
+    (SELECT watermark_ts FROM ${ref("etl_watermark")} WHERE source_name = 'bookings'),
+    is_backfill,
+    (SELECT COUNT(*) FROM book_candidates),
+    (SELECT COUNTIF(quarantine_reason IS NOT NULL) FROM book_candidates),
+    (SELECT COUNT(*) FROM book_batch),
+    (SELECT COUNTIF(change_type = 'INSERT') FROM book_merge_source),
+    (SELECT COUNTIF(change_type IN ('UPDATE', 'TOUCH')) FROM book_merge_source),
+    0,
+    run_ts, run_ts;
+
+  COMMIT TRANSACTION;
+
+EXCEPTION WHEN ERROR THEN
+  -- Any failure undoes everything above: no half-merged facts, no watermark moved.
+  ROLLBACK TRANSACTION;
+  RAISE USING MESSAGE = FORMAT('incremental_load rolled back: %s', @@error.message);
+END;

@@ -1,0 +1,51 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "Grain: one row per booking (business key booking_id). INITIAL build only; incremental_load.sqlx MERGEs into it afterwards and never rebuilds it. customer_key points at the customer version valid on the booking date (booking_created_date in [valid_from, valid_to): ASSUMPTION K3). Partitioned by check-in month and clustered by hotel_key so that a MERGE or a 'revenue by hotel and month' query only reads the partitions it needs."
+}
+
+CREATE OR REPLACE TABLE ${self()}
+PARTITION BY DATE_TRUNC(check_in_date, MONTH)
+CLUSTER BY hotel_key, booking_id
+AS
+SELECT
+  FARM_FINGERPRINT(b.booking_id) AS booking_key,
+  b.booking_id,
+  COALESCE(h.hotel_key, -1) AS hotel_key,
+  COALESCE(c.customer_key, -1) AS customer_key,
+  CAST(FORMAT_DATE('%Y%m%d', b.check_in_date) AS INT64) AS check_in_date_key,
+  CAST(FORMAT_DATE('%Y%m%d', b.check_out_date) AS INT64) AS check_out_date_key,
+  CAST(FORMAT_DATE('%Y%m%d', b.booking_created_date) AS INT64) AS booking_date_key,
+  b.check_in_date,                       -- kept as DATE for partitioning
+  b.booking_created_date,
+  b.customer_id,                         -- natural key, needed to re-point customer_key
+  b.room_type,
+  b.channel,
+  b.booking_source,
+  b.booking_status,
+  b.currency,
+  b.rate_per_night,
+  b.nights,
+  b.discount_pct,
+  b.is_loyalty_member,
+  b.room_revenue_idr,
+  b.recognised_room_revenue_idr,
+  b.is_revenue_derived,
+  b.date_fix,
+  b.row_ts AS source_updated_at,         -- guard for MERGE: only newer source rows may update
+  b.source_file,
+  b.row_hash,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM ${ref("stg_bookings")} AS b
+LEFT JOIN ${ref("dim_hotel")} AS h
+  ON h.hotel_code = b.hotel_code
+LEFT JOIN ${ref("dim_customer")} AS c
+  ON  c.customer_id = b.customer_id
+  AND DATETIME(b.booking_created_date) >= c.valid_from
+  AND DATETIME(b.booking_created_date) <  c.valid_to
+WHERE b.is_snapshot_row
+  AND b.quarantine_reason IS NULL
+QUALIFY ROW_NUMBER() OVER (PARTITION BY b.booking_id ORDER BY b.row_ts DESC, b.row_hash) = 1

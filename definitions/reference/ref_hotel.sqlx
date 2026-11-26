@@ -1,0 +1,16 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "The six hotels seen in bookings and POS. hotel_code is our stable business key for dim_hotel.",
+  assertions: { uniqueKey: ["hotel_code"], nonNull: ["hotel_code", "hotel_name"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('ALAYA_UBUD' AS hotel_code, 'Alaya Ubud' AS hotel_name),
+  ('BISMA_EIGHT',        'Bisma Eight'),
+  ('KATAMAMA_RESORT',    'Katamama Resort'),
+  ('KOMANEKA_BISMA',     'Komaneka Bisma'),
+  ('THE_LAYAR_SEMINYAK', 'The Layar Seminyak'),
+  ('THE_MULIA_NUSA_DUA', 'The Mulia Nusa Dua')
+])

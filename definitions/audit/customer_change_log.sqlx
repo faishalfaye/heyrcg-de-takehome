@@ -1,0 +1,17 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.AUDIT,
+  tags: ["initial"],
+  description: "Every CRM row we have accepted, one row per (customer_id, row_ts, row_hash). dim_customer is a pure function of this log (includes/scd2.js), which is what makes the SCD2 logic correct when one batch holds several changes for a customer, when rows arrive out of order, and when a run is repeated. Seeded with the deduplicated initial dump; incremental_load appends delta rows."
+}
+
+CREATE OR REPLACE TABLE ${self()}
+CLUSTER BY customer_id
+AS
+SELECT
+  customer_id, full_name, email, phone, city, nationality, joined_date, loyalty_tier,
+  row_ts, row_hash, source_file, source_row,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM ${ref("stg_customers_snapshot")}

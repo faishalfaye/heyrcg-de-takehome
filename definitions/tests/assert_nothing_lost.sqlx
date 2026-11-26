@@ -1,0 +1,54 @@
+config {
+  type: "assertion",
+  tags: ["initial", "incremental"],
+  description: "Row accounting: no row disappears silently. For every source, rows in BigQuery = rows in the file (manifest), and for the initial files every raw row ends up in exactly one place: the mart, the quarantine list, or the duplicate list."
+}
+
+-- 1. Raw table vs manifest: the load did not lose or double rows.
+WITH raw_counts AS (
+  SELECT _source_file AS file_name, COUNT(*) AS n FROM ${ref(constants.RAW, "bookings")} GROUP BY 1
+  UNION ALL SELECT _source_file, COUNT(*) FROM ${ref(constants.RAW, "customers")} GROUP BY 1
+  UNION ALL SELECT _source_file, COUNT(*) FROM ${ref(constants.RAW, "pos_transactions")} GROUP BY 1
+)
+SELECT m.file_name AS item, FORMAT('manifest %d rows, raw table %d rows', m.row_count, IFNULL(r.n, 0)) AS problem
+FROM ${ref(constants.RAW, "file_manifest")} AS m
+LEFT JOIN raw_counts AS r ON r.file_name = m.file_name
+WHERE m.source_name IN ('bookings', 'customers', 'pos_transactions') AND m.row_count != IFNULL(r.n, 0)
+
+UNION ALL
+-- 2. POS: raw rows = fact rows + quarantined + duplicates removed
+SELECT 'pos_transactions', FORMAT('raw %d != fact %d + quarantined %d + duplicates %d', raw_n, fact_n, quar_n, dup_n)
+FROM (
+  SELECT
+    (SELECT COUNT(*) FROM ${ref(constants.RAW, "pos_transactions")}) AS raw_n,
+    (SELECT COUNT(*) FROM ${ref("fact_pos_transactions")}) AS fact_n,
+    (SELECT COUNT(*) FROM ${ref("stg_pos_transactions")} WHERE quarantine_reason IS NOT NULL) AS quar_n,
+    (SELECT COUNT(*) FROM ${ref("stg_pos_transactions")} WHERE quarantine_reason IS NULL AND duplicate_rank > 1) AS dup_n
+)
+WHERE raw_n != fact_n + quar_n + dup_n
+
+UNION ALL
+-- 3. Customers (initial dump): raw rows = kept + duplicates removed + quarantined
+SELECT 'customers', FORMAT('raw %d != kept %d + duplicates %d + quarantined %d', raw_n, kept_n, dup_n, quar_n)
+FROM (
+  SELECT
+    (SELECT COUNT(*) FROM ${ref("stg_customers")} WHERE is_snapshot_row) AS raw_n,
+    (SELECT COUNT(*) FROM ${ref("stg_customers_snapshot")}) AS kept_n,
+    (SELECT COUNT(*) FROM ${ref("stg_quarantine")} WHERE source_name = 'customers' AND action = 'DUPLICATE_REMOVED') AS dup_n,
+    (SELECT COUNT(*) FROM ${ref("stg_customers")} WHERE is_snapshot_row AND quarantine_reason IS NOT NULL) AS quar_n
+)
+WHERE raw_n != kept_n + dup_n + quar_n
+
+UNION ALL
+-- 4. Bookings (initial file): every valid booking_id is in the fact
+SELECT b.booking_id, 'valid initial booking missing from fact_bookings'
+FROM ${ref("stg_bookings")} AS b
+LEFT JOIN ${ref("fact_bookings")} AS f ON f.booking_id = b.booking_id
+WHERE b.is_snapshot_row AND b.quarantine_reason IS NULL AND f.booking_id IS NULL
+
+UNION ALL
+-- 5. A repeated POS id must be an exact copy; otherwise we would be hiding a conflict
+SELECT pos_line_id, 'same pos_transaction_id with different content'
+FROM ${ref("stg_pos_transactions")}
+GROUP BY pos_line_id
+HAVING COUNT(DISTINCT row_hash) > 1

@@ -1,0 +1,20 @@
+config {
+  type: "view",
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "Business question 2: F&B revenue per guest, per hotel and month. 'Guest' = a known customer_id on the POS line (ASSUMPTION K9). Walk-in sales (no customer_id) cannot be attributed to a guest, so they are shown separately and NOT divided over guests. fnb_revenue_per_guest_idr = guest F&B revenue / distinct guests who spent at that hotel that month."
+}
+
+SELECT
+  d.year_month,
+  h.hotel_name,
+  SUM(IF(f.customer_id IS NOT NULL, f.total_amount_idr, 0)) AS guest_fnb_revenue_idr,
+  COUNT(DISTINCT f.customer_id) AS guests,
+  SAFE_DIVIDE(SUM(IF(f.customer_id IS NOT NULL, f.total_amount_idr, 0)),
+              COUNT(DISTINCT f.customer_id)) AS fnb_revenue_per_guest_idr,
+  SUM(IF(f.customer_id IS NULL, f.total_amount_idr, 0)) AS walk_in_fnb_revenue_idr,
+  SUM(f.total_amount_idr) AS total_fnb_revenue_idr
+FROM ${ref("fact_pos_transactions")} AS f
+JOIN ${ref("dim_date")} AS d ON d.date_key = f.transaction_date_key
+JOIN ${ref("dim_hotel")} AS h USING (hotel_key)
+GROUP BY 1, 2

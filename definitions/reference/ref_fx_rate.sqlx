@@ -1,0 +1,14 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "IDR per unit of currency. NOT invented: these are the rates the PMS itself used. For every non-IDR booking with a revenue value, TotalRevenue_IDR / (RatePerNight x nights) is 15,800 (USD), 10,200 (AUD) or 11,700 (SGD), give or take rounding. Used only to fill the 140 bookings where TotalRevenue_IDR is empty.",
+  assertions: { uniqueKey: ["currency"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('IDR' AS currency, CAST(1 AS NUMERIC) AS idr_per_unit),
+  ('USD', 15800),
+  ('AUD', 10200),
+  ('SGD', 11700)
+])

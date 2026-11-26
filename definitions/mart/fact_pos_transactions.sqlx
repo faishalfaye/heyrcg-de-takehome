@@ -1,0 +1,45 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "Grain: one row per POS line item (business key pos_transaction_id). Duplicates and quarantined rows are excluded (see stg_quarantine). customer_key = customer version valid on the transaction date; walk-in guests (no customer_id) get -1. The brief has no POS delta file, so this table is only built by the initial load; incremental_load still re-points its customer_key when a customer's history changes."
+}
+
+CREATE OR REPLACE TABLE ${self()}
+PARTITION BY DATE_TRUNC(transaction_date, MONTH)
+CLUSTER BY hotel_key, customer_key
+AS
+SELECT
+  FARM_FINGERPRINT(p.pos_line_id) AS pos_line_key,
+  p.pos_line_id,
+  COALESCE(h.hotel_key, -1) AS hotel_key,
+  COALESCE(c.customer_key, -1) AS customer_key,
+  CAST(FORMAT_DATE('%Y%m%d', p.transaction_date) AS INT64) AS transaction_date_key,
+  p.transaction_date,
+  p.customer_id,
+  p.outlet_name,
+  p.item_name,
+  p.category,
+  p.payment_method,
+  p.payment_type,
+  p.staff_id,
+  p.quantity,
+  p.unit_price_idr,
+  p.total_amount_idr,
+  p.is_hotel_inferred,
+  p.is_category_inferred,
+  p.is_unit_price_derived,
+  p.source_file,
+  p.row_hash,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM ${ref("stg_pos_transactions")} AS p
+LEFT JOIN ${ref("dim_hotel")} AS h
+  ON h.hotel_code = p.hotel_code
+LEFT JOIN ${ref("dim_customer")} AS c
+  ON  c.customer_id = p.customer_id
+  AND DATETIME(p.transaction_date) >= c.valid_from
+  AND DATETIME(p.transaction_date) <  c.valid_to
+WHERE p.quarantine_reason IS NULL
+  AND p.duplicate_rank = 1

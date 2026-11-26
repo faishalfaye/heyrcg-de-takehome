@@ -1,0 +1,31 @@
+# Runs on every push and pull request, without any cloud credentials:
+#   1. dataform compile: every SQLX file is valid, every ref() resolves, no dependency cycles
+#   2. the reference model: independent Python re-implementation must still print
+#      "Idempotent (run twice): True" and "Out-of-order + backfill == in-order: True"
+# The BigQuery run itself is done with scripts/run_all.sh; its output is committed in evidence/.
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  compile-and-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Dataform compile
+        run: npx --yes @dataform/cli@3.1.8 compile
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Reference model (independent oracle)
+        run: |
+          python tests/reference/reference_model.py | tee reference_output.txt
+          grep -q "Idempotent (run twice): True" reference_output.txt
+          grep -q "Out-of-order + backfill == in-order: True" reference_output.txt

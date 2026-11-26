@@ -1,0 +1,23 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.AUDIT,
+  tags: ["initial"],
+  description: "One row per source per incremental run: watermark before/after and what the run did. This is the before/after evidence for the README. Not part of the mart fingerprint (it grows on every run by design)."
+}
+
+CREATE OR REPLACE TABLE ${self()} (
+  run_ts             TIMESTAMP NOT NULL,
+  source_name        STRING    NOT NULL,
+  watermark_before   DATETIME,
+  watermark_after    DATETIME,
+  is_backfill        BOOL,
+  rows_newer_than_wm INT64,     -- delta rows read (after the watermark filter)
+  rows_quarantined   INT64,
+  rows_in_batch      INT64,     -- after quarantine + dedup
+  rows_inserted      INT64,
+  rows_updated       INT64,
+  rows_deleted       INT64,
+  created_at         TIMESTAMP NOT NULL,
+  updated_at         TIMESTAMP NOT NULL
+)

@@ -1,0 +1,24 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "Which hotel each F&B outlet belongs to. Built from the POS rows that DO have hotel_name: every outlet maps to exactly one hotel (checked during profiling), so we can fill the 595 POS rows where hotel_name is empty.",
+  assertions: { uniqueKey: ["outlet_name"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('Alaya Cafe' AS outlet_name, 'Alaya Ubud' AS hotel_name),
+  ('Alaya Sky Bar',          'Alaya Ubud'),
+  ('Bisma Restaurant',       'Bisma Eight'),
+  ('Bisma Rooftop',          'Bisma Eight'),
+  ('Katamama Dining',        'Katamama Resort'),
+  ('Katamama Lobby Bar',     'Katamama Resort'),
+  ('Komaneka Kitchen',       'Komaneka Bisma'),
+  ('Komaneka Tea Lounge',    'Komaneka Bisma'),
+  ('Mulia Gelato',           'The Mulia Nusa Dua'),
+  ('Mulia Lounge',           'The Mulia Nusa Dua'),
+  ('Mulia Soleil',           'The Mulia Nusa Dua'),
+  ('The Layar - Main Bar',   'The Layar Seminyak'),
+  ('The Layar - Pool Bar',   'The Layar Seminyak'),
+  ('The Layar - Restaurant', 'The Layar Seminyak')
+])

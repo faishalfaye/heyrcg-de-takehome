@@ -1,0 +1,22 @@
+config {
+  type: "operations",
+  hasOutput: true,
+  schema: constants.AUDIT,
+  tags: ["initial"],
+  description: "High-water mark per source: the newest updated_at already processed. Starts at the extraction time of the initial files (2024-03-28 00:00:00). Only incremental_load moves it, and only forwards. Re-running the initial load resets it, which is what a full rebuild/backfill should do."
+}
+
+-- Source timestamps carry no time zone, so the watermark is a DATETIME, not a TIMESTAMP.
+CREATE OR REPLACE TABLE ${self()} AS
+SELECT
+  source_name,
+  ${constants.SNAPSHOT_TS} AS watermark_ts,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM UNNEST(['bookings', 'customers']) AS source_name;
+
+-- The initial files are processed by the initial load itself.
+UPDATE ${ref(constants.RAW, "file_manifest")}
+SET processed_at = CURRENT_TIMESTAMP()
+WHERE processed_at IS NULL
+  AND file_name IN ('raw_bookings.csv', 'raw_customers.csv', 'raw_pos_transactions.csv', 'raw_marketing_performance.csv')

@@ -1,0 +1,45 @@
+config {
+  type: "assertion",
+  tags: ["initial", "incremental"],
+  description: "Referential integrity of both facts: unique business key, every surrogate key exists in its dimension, and every booking/POS line points at the customer version that was valid on its own date."
+}
+
+SELECT 'fact_bookings' AS fact, booking_id AS business_key, 'duplicate booking_id' AS problem
+FROM ${ref("fact_bookings")} GROUP BY booking_id HAVING COUNT(*) > 1
+UNION ALL
+SELECT 'fact_pos_transactions', pos_line_id, 'duplicate pos_line_id'
+FROM ${ref("fact_pos_transactions")} GROUP BY pos_line_id HAVING COUNT(*) > 1
+UNION ALL
+SELECT 'fact_bookings', f.booking_id, 'hotel_key not in dim_hotel'
+FROM ${ref("fact_bookings")} AS f LEFT JOIN ${ref("dim_hotel")} AS h ON h.hotel_key = f.hotel_key WHERE h.hotel_key IS NULL
+UNION ALL
+SELECT 'fact_bookings', f.booking_id, 'date key not in dim_date'
+FROM ${ref("fact_bookings")} AS f
+WHERE f.check_in_date_key  NOT IN (SELECT date_key FROM ${ref("dim_date")})
+   OR f.check_out_date_key NOT IN (SELECT date_key FROM ${ref("dim_date")})
+   OR f.booking_date_key   NOT IN (SELECT date_key FROM ${ref("dim_date")})
+UNION ALL
+SELECT 'fact_bookings', f.booking_id, 'customer_key not in dim_customer'
+FROM ${ref("fact_bookings")} AS f LEFT JOIN ${ref("dim_customer")} AS c ON c.customer_key = f.customer_key WHERE c.customer_key IS NULL
+UNION ALL
+SELECT 'fact_bookings', f.booking_id, 'customer version not valid on booking date'
+FROM ${ref("fact_bookings")} AS f JOIN ${ref("dim_customer")} AS c USING (customer_key)
+WHERE f.customer_key != -1
+  AND NOT (DATETIME(f.booking_created_date) >= c.valid_from AND DATETIME(f.booking_created_date) < c.valid_to)
+UNION ALL
+SELECT 'fact_bookings', f.booking_id, 'known customer_id but unknown customer_key'
+FROM ${ref("fact_bookings")} AS f WHERE f.customer_id IS NOT NULL AND f.customer_key = -1
+UNION ALL
+SELECT 'fact_pos_transactions', f.pos_line_id, 'hotel_key not in dim_hotel'
+FROM ${ref("fact_pos_transactions")} AS f LEFT JOIN ${ref("dim_hotel")} AS h ON h.hotel_key = f.hotel_key WHERE h.hotel_key IS NULL
+UNION ALL
+SELECT 'fact_pos_transactions', f.pos_line_id, 'date key not in dim_date'
+FROM ${ref("fact_pos_transactions")} AS f WHERE f.transaction_date_key NOT IN (SELECT date_key FROM ${ref("dim_date")})
+UNION ALL
+SELECT 'fact_pos_transactions', f.pos_line_id, 'customer version not valid on transaction date'
+FROM ${ref("fact_pos_transactions")} AS f JOIN ${ref("dim_customer")} AS c USING (customer_key)
+WHERE f.customer_key != -1
+  AND NOT (DATETIME(f.transaction_date) >= c.valid_from AND DATETIME(f.transaction_date) < c.valid_to)
+UNION ALL
+SELECT 'fact_pos_transactions', f.pos_line_id, 'known customer_id but unknown customer_key'
+FROM ${ref("fact_pos_transactions")} AS f WHERE f.customer_id IS NOT NULL AND f.customer_key = -1

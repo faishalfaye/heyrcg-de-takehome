@@ -1,0 +1,28 @@
+config {
+  type: "table",
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "One row per calendar day. The brief asks for Q1 and Q2 2024; we generate all of 2023 and 2024 because booking dates (created_at) go back to October 2023 and a fact must never point at a missing date. date_key = YYYYMMDD as INT64 (readable and sortable). -1 = unknown date.",
+  assertions: { uniqueKey: ["date_key"], nonNull: ["date_key"] }
+}
+
+SELECT
+  CAST(FORMAT_DATE('%Y%m%d', d) AS INT64) AS date_key,
+  d AS full_date,
+  EXTRACT(YEAR FROM d) AS year,
+  EXTRACT(QUARTER FROM d) AS quarter,
+  EXTRACT(MONTH FROM d) AS month,
+  FORMAT_DATE('%B', d) AS month_name,
+  FORMAT_DATE('%Y-%m', d) AS year_month,
+  EXTRACT(DAY FROM d) AS day_of_month,
+  EXTRACT(DAYOFWEEK FROM d) AS day_of_week,          -- 1 = Sunday
+  FORMAT_DATE('%A', d) AS day_name,
+  EXTRACT(DAYOFWEEK FROM d) IN (1, 7) AS is_weekend,
+  CURRENT_TIMESTAMP() AS created_at,
+  CURRENT_TIMESTAMP() AS updated_at
+FROM UNNEST(GENERATE_DATE_ARRAY('2023-01-01', '2024-12-31')) AS d
+
+UNION ALL
+
+SELECT -1, NULL, NULL, NULL, NULL, 'Unknown', 'Unknown', NULL, NULL, 'Unknown', NULL,
+       CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()

@@ -1,0 +1,24 @@
+config {
+  type: "view",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "The initial CRM dump, deduplicated to one row per customer_id. The dump has 50 customer_ids that appear twice; in every pair only the email differs (or nothing differs). There is no timestamp to say which row is newer, so we keep the most useful row: valid email first, then the most complete row, then the alphabetically first email so the choice is deterministic (same input = same output on every run).",
+  assertions: { uniqueKey: ["customer_id"] }
+}
+
+SELECT
+  *,
+  COUNT(*) OVER (PARTITION BY customer_id) AS duplicate_count
+FROM ${ref("stg_customers")}
+WHERE is_snapshot_row
+  AND quarantine_reason IS NULL
+QUALIFY ROW_NUMBER() OVER (
+  PARTITION BY customer_id
+  ORDER BY
+    email IS NULL,                                                   -- valid email first
+    (IF(full_name IS NULL, 0, 1) + IF(email IS NULL, 0, 1) + IF(phone IS NULL, 0, 1)
+     + IF(city IS NULL, 0, 1) + IF(nationality IS NULL, 0, 1)
+     + IF(joined_date IS NULL, 0, 1) + IF(loyalty_tier IS NULL, 0, 1)) DESC,  -- most complete
+    email,                                                           -- deterministic tie-break
+    row_hash
+) = 1

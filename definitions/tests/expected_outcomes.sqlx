@@ -1,0 +1,111 @@
+config {
+  type: "assertion",
+  tags: ["incremental"],
+  description: "The edge-case specification from docs/edge_cases.md, written as a test. Each row is one expectation, written down BEFORE the pipeline was built and calculated by hand and by tests/reference/reference_model.py (independent Python, straight from the CSV files). The assertion returns every expectation the mart does not meet. Valid after the 2024-04-01 delta has been loaded and processed (once or many times)."
+}
+
+WITH
+-- ------------------------------------------------------------------------------------------
+-- What the mart actually contains
+-- ------------------------------------------------------------------------------------------
+booking_actual AS (
+  SELECT
+    f.booking_id,
+    FORMAT('%s|%s|%d|%s|%s',
+      f.booking_status,
+      CAST(f.recognised_room_revenue_idr AS STRING),
+      f.nights,
+      FORMAT_DATETIME('%F %T', f.source_updated_at),
+      IFNULL(IF(c.is_inferred, 'INFERRED', c.loyalty_tier), 'NONE')) AS actual
+  FROM ${ref("fact_bookings")} AS f
+  JOIN ${ref("dim_customer")} AS c USING (customer_key)
+),
+customer_actual AS (
+  SELECT
+    customer_id,
+    FORMAT('%s|%s|%s',
+      STRING_AGG(IFNULL(IF(is_inferred, 'INFERRED', loyalty_tier), 'NONE'), '>' ORDER BY valid_from),
+      IFNULL(MAX(IF(is_current, email, NULL)), 'NULL'),
+      IFNULL(MAX(IF(is_current, phone, NULL)), 'NULL')) AS actual
+  FROM ${ref("dim_customer")}
+  GROUP BY customer_id
+),
+metric_actual AS (
+  SELECT 'fact_bookings rows' AS item, CAST(COUNT(*) AS STRING) AS actual FROM ${ref("fact_bookings")}
+  UNION ALL SELECT 'dim_customer rows', CAST(COUNT(*) AS STRING) FROM ${ref("dim_customer")}
+  UNION ALL SELECT 'dim_customer inferred members', CAST(COUNTIF(is_inferred) AS STRING) FROM ${ref("dim_customer")}
+  UNION ALL SELECT CONCAT('watermark ', source_name), FORMAT_DATETIME('%F %T', watermark_ts) FROM ${ref("etl_watermark")}
+  UNION ALL
+  SELECT CONCAT('March 2024 revenue ', h.hotel_code), CAST(ROUND(SUM(f.recognised_room_revenue_idr), 0) AS STRING)
+  FROM ${ref("fact_bookings")} AS f JOIN ${ref("dim_hotel")} AS h USING (hotel_key)
+  WHERE f.check_in_date BETWEEN '2024-03-01' AND '2024-03-31'
+  GROUP BY h.hotel_code
+),
+
+-- ------------------------------------------------------------------------------------------
+-- What the mart must contain. Format: status|recognised revenue|nights|source_updated_at|tier at booking
+-- ------------------------------------------------------------------------------------------
+booking_expected AS (
+  SELECT * FROM UNNEST([
+    STRUCT('BKG-00002' AS booking_id, 'CANCELLED|0|6|2024-03-29 09:12:00|Bronze' AS expected,
+           'B2 two versions in one file: the later "cnx" row wins' AS case_label),
+    ('BKG-00003', 'CHECKED_OUT|39150734|7|2024-03-29 10:40:00|Silver',      'B4 status update Confirmed -> checked_out'),
+    ('BKG-00006', 'CHECKED_OUT|26630805|5|2024-03-29 11:02:00|Bronze',      'B4 status update Confirmed -> Checked Out'),
+    ('BKG-00010', 'CHECKED_OUT|21794214|6|2024-03-30 08:20:00|NONE',        'B4 stay extended 4 -> 6 nights, revenue up'),
+    ('BKG-00011', 'CANCELLED|0|3|2024-03-30 14:55:00|NONE',                 'B4 January booking cancelled after the fact'),
+    ('BKG-00012', 'CHECKED_IN|9754688|2|2024-03-28 00:00:00|Bronze',        'B3 row older than the watermark is ignored'),
+    ('BKG-00013', 'CHECKED_OUT|29258830.8|6|2024-03-30 16:30:00|NONE',      'B4 "completed" + discount now applied'),
+    ('BKG-10004', 'CONFIRMED|722500|1|2024-03-31 11:54:00|Silver',          'B1 exact duplicate row -> one booking'),
+    ('BKG-10017', 'CONFIRMED|3600000|1|2024-03-29 11:57:00|NONE',           'B9 booked 03-19, before CUST00001 got Bronze on 03-29'),
+    ('BKG-10045', 'CONFIRMED|7200000|2|2024-03-30 14:15:00|Silver',         'B8 customer new in the same batch'),
+    ('BKG-10047', 'CONFIRMED|15600000|3|2024-03-30 19:40:00|INFERRED',      'B7 unknown customer CUST19999 -> inferred member'),
+    ('BKG-10048', 'CHECKED_OUT|15600000|3|2024-03-29 08:05:00|NONE',        'B5 late-arriving March stay'),
+    ('BKG-10049', 'CHECKED_OUT|7200000|2|2024-03-29 09:05:00|NONE',         'B5 late-arriving March stay'),
+    ('BKG-10050', 'CHECKED_OUT|19760000|4|2024-03-29 10:05:00|Silver',      'B5 late-arriving March stay')
+  ])
+),
+customer_expected AS (
+  -- Format: tier of each version in time order | current email | current phone
+  SELECT * FROM UNNEST([
+    STRUCT('CUST00001' AS customer_id, 'NONE>Bronze|customer.1@gmail.com|08782090572' AS expected,
+           'C7 no tier -> Bronze is a tier change (ASSUMPTION K6)' AS case_label),
+    ('CUST00002', 'Gold|customer.2@hotmail.com|08262365542',            'C5 only the email spelling differs; after cleaning nothing changes, nothing is created'),
+    ('CUST00006', 'Silver>Gold>Platinum|customer.6@gmail.com|08301822108', 'C3 two tier changes in one batch'),
+    ('CUST00010', 'Gold>Platinum|customer.10@gmail.com|08797709566',    'C4 rows out of order + exact duplicate + a row that changes nothing'),
+    ('CUST00011', 'Bronze|customer.11@gmail.com|08134455667',           'C6 Type 1: phone was empty, now filled in place, no new version'),
+    ('CUST00012', 'Silver>Gold|customer12@yahoo.com|08251078407',       'C2/C8 tier change written as "gold"'),
+    ('CUST00016', 'Bronze>Silver|customer16@yahoo.com|08679408548',     'C2 tier change'),
+    ('CUST00020', 'Bronze>Silver|customer20@yahoo.com|08169203678',     'C2/C8 tier change written as "SILVER"'),
+    ('CUST00024', 'Gold>Platinum|customer.24@gmail.com|08315438018',    'C2 tier change'),
+    ('CUST10001', 'Bronze|customer10001@yahoo.com|08858482648',         'C1/C9 new customer, email with spaces and capitals'),
+    ('CUST10004', 'Silver|customer.10004@gmail.com|08907991403',        'C1 new customer'),
+    ('CUST19999', 'INFERRED|NULL|NULL',                                 'B7 inferred member, not in the CRM')
+  ])
+),
+metric_expected AS (
+  SELECT * FROM UNNEST([
+    STRUCT('fact_bookings rows' AS item, '3250' AS expected, '3,200 initial + 50 new booking ids' AS case_label),
+    ('dim_customer rows',             '816',  '800 customers + 8 new versions + 6 new customers + 1 inferred + 1 unknown member'),
+    ('dim_customer inferred members', '1',    'CUST19999'),
+    ('watermark customers',           '2024-03-31 18:10:00', 'newest updated_at in delta_customers'),
+    ('watermark bookings',            '2024-03-31 20:57:00', 'newest updated_at in delta_bookings'),
+    ('March 2024 revenue ALAYA_UBUD',         '1918090885', '+7,264,738: BKG-00010 extended'),
+    ('March 2024 revenue BISMA_EIGHT',        '1960167118', '-26,148,480 BKG-00002 cancelled, +7,200,000 BKG-10049'),
+    ('March 2024 revenue KATAMAMA_RESORT',    '2234059430', 'unchanged'),
+    ('March 2024 revenue KOMANEKA_BISMA',     '1976391037', 'unchanged'),
+    ('March 2024 revenue THE_LAYAR_SEMINYAK', '1745556533', 'unchanged'),
+    ('March 2024 revenue THE_MULIA_NUSA_DUA', '2064843376', '+15,600,000 BKG-10048, +19,760,000 BKG-10050')
+  ])
+)
+
+SELECT e.case_label, e.booking_id AS item, e.expected, IFNULL(a.actual, 'MISSING') AS actual
+FROM booking_expected AS e LEFT JOIN booking_actual AS a ON a.booking_id = e.booking_id
+WHERE a.actual IS DISTINCT FROM e.expected
+UNION ALL
+SELECT e.case_label, e.customer_id, e.expected, IFNULL(a.actual, 'MISSING')
+FROM customer_expected AS e LEFT JOIN customer_actual AS a ON a.customer_id = e.customer_id
+WHERE a.actual IS DISTINCT FROM e.expected
+UNION ALL
+SELECT e.case_label, e.item, e.expected, IFNULL(a.actual, 'MISSING')
+FROM metric_expected AS e LEFT JOIN metric_actual AS a ON a.item = e.item
+WHERE a.actual IS DISTINCT FROM e.expected

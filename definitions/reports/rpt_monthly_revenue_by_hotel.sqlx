@@ -1,0 +1,31 @@
+config {
+  type: "view",
+  schema: constants.MART,
+  tags: ["initial"],
+  description: "Business question 1: monthly revenue by hotel. Room revenue is assigned to the CHECK-IN month (ASSUMPTION K2) and excludes cancelled and no-show bookings (ASSUMPTION K5). F&B revenue is assigned to the transaction month. Being a view, it always reflects the current state of the facts."
+}
+
+WITH rooms AS (
+  SELECT d.year_month, f.hotel_key,
+         SUM(f.recognised_room_revenue_idr) AS room_revenue_idr,
+         COUNTIF(f.booking_status NOT IN ${constants.NON_REVENUE_STATUSES}) AS bookings_counted
+  FROM ${ref("fact_bookings")} AS f
+  JOIN ${ref("dim_date")} AS d ON d.date_key = f.check_in_date_key
+  GROUP BY 1, 2
+),
+fnb AS (
+  SELECT d.year_month, f.hotel_key, SUM(f.total_amount_idr) AS fnb_revenue_idr
+  FROM ${ref("fact_pos_transactions")} AS f
+  JOIN ${ref("dim_date")} AS d ON d.date_key = f.transaction_date_key
+  GROUP BY 1, 2
+)
+SELECT
+  year_month,
+  h.hotel_name,
+  IFNULL(r.room_revenue_idr, 0) AS room_revenue_idr,
+  IFNULL(b.fnb_revenue_idr, 0) AS fnb_revenue_idr,
+  IFNULL(r.room_revenue_idr, 0) + IFNULL(b.fnb_revenue_idr, 0) AS total_revenue_idr,
+  IFNULL(r.bookings_counted, 0) AS bookings_counted
+FROM rooms AS r
+FULL OUTER JOIN fnb AS b USING (year_month, hotel_key)
+JOIN ${ref("dim_hotel")} AS h USING (hotel_key)

@@ -1,0 +1,28 @@
+config {
+  type: "table",
+  schema: constants.STG,
+  tags: ["initial"],
+  description: "Maps every raw booking_status spelling (lower-cased, trimmed) to one of five values. A spelling that is not in this table sends the row to quarantine (UNKNOWN_STATUS) instead of guessing.",
+  assertions: { uniqueKey: ["status_key"] }
+}
+
+SELECT * FROM UNNEST([
+  STRUCT('confirmed' AS status_key, 'CONFIRMED' AS booking_status),
+  ('confirm',     'CONFIRMED'),
+  ('checked in',  'CHECKED_IN'),
+  ('checkedin',   'CHECKED_IN'),
+  ('checked_in',  'CHECKED_IN'),
+  ('checked-in',  'CHECKED_IN'),
+  ('checked out', 'CHECKED_OUT'),
+  ('checkedout',  'CHECKED_OUT'),
+  ('checked_out', 'CHECKED_OUT'),
+  ('completed',   'CHECKED_OUT'),   -- ASSUMPTION K7: "completed" means the stay is finished
+  ('cancelled',   'CANCELLED'),
+  ('canceled',    'CANCELLED'),
+  ('cancel',      'CANCELLED'),
+  ('cnx',         'CANCELLED'),
+  ('no_show',     'NO_SHOW'),
+  ('noshow',      'NO_SHOW'),
+  ('no-show',     'NO_SHOW'),
+  ('no show',     'NO_SHOW')
+])
