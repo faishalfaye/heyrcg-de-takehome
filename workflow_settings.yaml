@@ -1,0 +1,16 @@
+# Dataform project settings.
+# Replace defaultProject with your own GCP project id (or override it in a workflow configuration).
+defaultProject: your-gcp-project-id
+defaultLocation: asia-southeast2        # Jakarta. Must match the location used in scripts/load_raw.sh
+defaultDataset: heyrcg_stg              # staging views live here unless a file says otherwise
+defaultAssertionDataset: heyrcg_assertions
+dataformCoreVersion: 3.1.8
+
+vars:
+  # Dataset that scripts/load_raw.sh loads the CSV files into (not managed by Dataform).
+  raw_dataset: heyrcg_raw
+  # Time the initial files were extracted from the source systems. Also the starting watermark.
+  snapshot_ts: "2024-03-28 00:00:00"
+  # Leave empty for a normal daily run. Set to a DATETIME (e.g. "2024-03-28 00:00:00") to
+  # re-process older rows on purpose: a late file or a backfill. See docs/decisions.md D11.
+  backfill_from: ""
