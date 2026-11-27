@@ -1,5 +1,6 @@
 config {
   type: "assertion",
+  dependencies: ["incremental_load"],
   tags: ["incremental"],
   description: "The strongest single check on Part 3: what the incremental machinery produced (watermark + MERGE + guard) must equal a naive full recompute from staging (for each booking take its newest usable row, no watermark, no MERGE). A full recompute naturally ignores the stale BKG-00012 row because the initial snapshot is newer. Any difference is returned with both values, including March revenue per hotel."
 }

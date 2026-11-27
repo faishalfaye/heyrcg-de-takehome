@@ -1,5 +1,6 @@
 config {
   type: "assertion",
+  dependencies: ["incremental_load"],
   tags: ["initial", "incremental"],
   description: "Row accounting: no row disappears silently. For every source, rows in BigQuery = rows in the file (manifest), and for the initial files every raw row ends up in exactly one place: the mart, the quarantine list, or the duplicate list."
 }

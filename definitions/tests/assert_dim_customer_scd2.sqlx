@@ -1,5 +1,6 @@
 config {
   type: "assertion",
+  dependencies: ["incremental_load"],
   tags: ["initial", "incremental"],
   description: "SCD2 integrity of dim_customer. Returns one row per violation (an assertion passes when it returns nothing): every customer has exactly one current version; versions are contiguous (valid_to = next valid_from, no gaps, no overlaps); the first version starts in 1900 and the last one is open; valid_from < valid_to; keys are unique."
 }

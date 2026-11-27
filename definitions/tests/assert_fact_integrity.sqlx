@@ -1,5 +1,6 @@
 config {
   type: "assertion",
+  dependencies: ["incremental_load"],
   tags: ["initial", "incremental"],
   description: "Referential integrity of both facts: unique business key, every surrogate key exists in its dimension, and every booking/POS line points at the customer version that was valid on its own date."
 }

@@ -1,5 +1,6 @@
 config {
   type: "assertion",
+  dependencies: ["incremental_load"],
   tags: ["incremental"],
   description: "The edge-case specification from docs/edge_cases.md, written as a test. Each row is one expectation, written down BEFORE the pipeline was built and calculated by hand and by tests/reference/reference_model.py (independent Python, straight from the CSV files). The assertion returns every expectation the mart does not meet. Valid after the 2024-04-01 delta has been loaded and processed (once or many times)."
 }
