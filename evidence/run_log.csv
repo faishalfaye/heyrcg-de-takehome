@@ -1,0 +1,5 @@
+run_ts,source_name,watermark_before,watermark_after,is_backfill,rows_newer_than_wm,rows_quarantined,rows_in_batch,rows_inserted,rows_updated,rows_deleted,created_at,updated_at
+2026-11-27 06:41:41,bookings,2024-03-28T00:00:00,2024-03-31T20:57:00,false,59,0,56,50,6,0,2026-11-27 06:41:41,2026-11-27 06:41:41
+2026-11-27 06:41:41,customers,2024-03-28T00:00:00,2024-03-31T18:10:00,false,18,0,15,14,8,0,2026-11-27 06:41:41,2026-11-27 06:41:41
+2026-11-27 06:54:01,bookings,2024-03-31T20:57:00,2024-03-31T20:57:00,false,0,0,0,0,0,0,2026-11-27 06:54:01,2026-11-27 06:54:01
+2026-11-27 06:54:01,customers,2024-03-31T18:10:00,2024-03-31T18:10:00,false,0,0,0,0,0,0,2026-11-27 06:54:01,2026-11-27 06:54:01

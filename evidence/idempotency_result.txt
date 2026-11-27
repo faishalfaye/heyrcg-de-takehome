@@ -1,0 +1,1 @@
+IDEMPOTENT: after_run2 is identical to after_run1 for every mart table

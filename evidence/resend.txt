@@ -1,0 +1,2 @@
+SKIP  delta_customers_2024-04-01.csv: already loaded (same MD5)
+SKIP  delta_bookings_2024-04-01.csv: already loaded (same MD5)
