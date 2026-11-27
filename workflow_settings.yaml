@@ -1,6 +1,6 @@
 # Dataform project settings.
 # Replace defaultProject with your own GCP project id (or override it in a workflow configuration).
-defaultProject: your-gcp-project-id
+defaultProject: project-0c6103cc-6451-42d7-a7e
 defaultLocation: asia-southeast2        # Jakarta. Must match the location used in scripts/load_raw.sh
 defaultDataset: heyrcg_stg              # staging views live here unless a file says otherwise
 defaultAssertionDataset: heyrcg_assertions
