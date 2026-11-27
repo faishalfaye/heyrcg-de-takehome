@@ -2,6 +2,8 @@
 #   1. dataform compile + python scripts compile: every SQLX file is valid, every ref() resolves, no dependency cycles
 #   2. the reference model: independent Python re-implementation must still print
 #      "Idempotent (run twice): True" and "Out-of-order + backfill == in-order: True"
+#   3. the local DuckDB run (local/run_local.py): the whole pipeline from a fresh clone, all
+#      assertions, idempotency, and every number compared with the BigQuery run in evidence/
 # The BigQuery run itself is done with scripts/run_all.py; its output is committed in evidence/.
 name: ci
 
@@ -25,10 +27,15 @@ jobs:
           python-version: "3.12"
 
       - name: Python scripts compile
-        run: python -m py_compile scripts/*.py
+        run: python -m py_compile scripts/*.py local/*.py
 
       - name: Reference model (independent oracle)
         run: |
           python tests/reference/reference_model.py | tee reference_output.txt
           grep -q "Idempotent (run twice): True" reference_output.txt
           grep -q "Out-of-order + backfill == in-order: True" reference_output.txt
+
+      - name: Local run (DuckDB) from a fresh clone
+        run: |
+          pip install -r local/requirements.txt
+          python local/run_local.py

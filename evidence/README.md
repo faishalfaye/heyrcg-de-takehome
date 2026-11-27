@@ -1,7 +1,8 @@
 # Evidence
 
 Outputs of a real run of `scripts/run_all.py` against BigQuery, committed so a reviewer can check
-the claims in the main README without running anything.
+the claims in the main README without running anything. `python3 local/run_local.py` writes the
+same files to `local/output/` and compares them with these automatically.
 
 | File | What it shows |
 |---|---|

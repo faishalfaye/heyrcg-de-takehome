@@ -1,14 +1,15 @@
 # Design decisions
 
-Each decision says what was chosen, why, and what it costs. Open questions for the client are
-marked **ASSUMPTION Kn**: they are the defaults the code uses until HeyRCG answers, and each one
-is a single, easy-to-find place in the code.
+Each decision says what was chosen, why, and what it costs. Questions for the client are
+marked **ASSUMPTION Kn**. HeyRCG asked us to make these calls ourselves; each one is a single,
+easy-to-find place in the code, and the README section "Assumptions" gives the reason for each
+choice and the number the alternative would give.
 
-## Open assumptions (waiting for HeyRCG; K8 resolved, see D3)
+## Assumptions (K1 answered by HeyRCG, K8 resolved in D3, the rest are judgement calls)
 
 | Id | Question | What the code does now | Where to change it |
 |---|---|---|---|
-| K1 | Do reviewers need to run the pipeline themselves? | Repo + `evidence/` outputs; `scripts/run_all.py` for anyone with a GCP project | n/a |
+| K1 | Do reviewers need to run the pipeline themselves? | **Answered: yes, locally from a fresh clone.** `python3 local/run_local.py` (DuckDB port, compared with `evidence/`); `scripts/run_all.py` for BigQuery | `local/` |
 | K2 | Which month does room revenue belong to? | Check-in month (a stay crossing a month end is not split) | `rpt_monthly_revenue_by_hotel.sqlx` |
 | K3 | "Customer version valid at booking time": which date? | Booking `created_at` | join conditions on `booking_created_date` |
 | K4 | Is `TotalRevenue_IDR` gross or net of `discount_pct`? Initial rows are gross (= rate × nights × FX for all 3,060 rows with a value); new delta bookings are net | Use the PMS value as is; derive only when empty (gross, like the initial load) | `stg_bookings.sqlx` `room_revenue_idr` |

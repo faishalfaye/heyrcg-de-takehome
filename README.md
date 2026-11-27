@@ -11,16 +11,22 @@ expectations, against a full recompute, and against an independent Python model.
 All numbers below come from a real run on BigQuery (27 November 2026); the raw outputs are in
 [`evidence/`](evidence/). They match the expectations written before the pipeline was built.
 
+**To run it on your own machine** (no cloud account): `pip install -r local/requirements.txt`, then
+`python3 local/run_local.py`. It runs the same pipeline on DuckDB and checks every number against
+`evidence/` ([details](#run-locally)).
+
 ## Contents
 1. [Architecture](#architecture)
-2. [How to run](#how-to-run)
-3. [Results: March 2024 revenue before and after the increment](#results)
-4. [Idempotency evidence](#idempotency)
-5. [Data quality: what was dropped, flagged, quarantined](#data-quality)
-6. [Modelling decisions (short)](#modelling)
-7. [Part 4: written answers](#part-4)
-8. [How I used AI](#ai)
-9. [Limitations and what I would do next](#limitations)
+2. [Run it locally (one command, no cloud)](#run-locally)
+3. [Run it on BigQuery](#how-to-run)
+4. [Results: March 2024 revenue before and after the increment](#results)
+5. [Idempotency evidence](#idempotency)
+6. [Data quality: what was dropped, flagged, quarantined](#data-quality)
+7. [Assumptions: what I chose, why, and what the alternative gives](#assumptions)
+8. [Modelling decisions (short)](#modelling)
+9. [Part 4: written answers](#part-4)
+10. [How I used AI](#ai)
+11. [Limitations and what I would do next](#limitations)
 
 ## Architecture <a id="architecture"></a>
 
@@ -54,6 +60,7 @@ Any error rolls everything back.
 | Folder | What is in it |
 |---|---|
 | `scripts/` | Python: `load_raw.py` (land CSVs), `run_all.py` (whole story + evidence), `fingerprint.py`, `split_delta.py` |
+| `local/` | The local run: `run_local.py` and `sql/`, the same pipeline ported to DuckDB, one file per Dataform folder |
 | `definitions/reference/` | Mapping tables: statuses, items, payment methods, outlets, hotels, PMS exchange rates |
 | `definitions/staging/` | One view per source + `stg_quarantine` |
 | `definitions/mart/` | Dimensions and facts (initial build) |
@@ -65,7 +72,47 @@ Any error rolls everything back.
 | `docs/` | `edge_cases.md` (the spec), `decisions.md` (why, and open assumptions K1–K9) |
 | `evidence/` | Outputs of a real run: fingerprints, revenue before/after, run log, quarantine summary |
 
-## How to run <a id="how-to-run"></a>
+## Run it locally (one command, no cloud) <a id="run-locally"></a>
+
+Prerequisites: **Python 3.9 or newer** and git. Nothing else: no cloud account, no database server.
+
+```bash
+git clone https://github.com/faishalfaye/heyrcg-de-takehome.git
+cd heyrcg-de-takehome
+pip install -r local/requirements.txt      # installs DuckDB, nothing else
+python3 local/run_local.py                 # on Windows: python local\run_local.py
+```
+
+It takes a few seconds and runs the whole story in order: load the initial CSV files (all columns
+as text, lineage, MD5 manifest) → initial build + assertions → load the 2024-04-01 delta → incremental
+run 1 (one transaction) + assertions → run 2 + assertions → resend the same delta (skipped) →
+compare with `evidence/` → compute the alternatives in [Assumptions](#assumptions). The last line
+should be:
+
+```
+ALL GOOD: assertions passed, run 2 changed nothing, numbers match the BigQuery evidence.
+```
+
+The script prints the row counts, March revenue before/after, the run log and the idempotency check,
+writes them to `local/output/` with the same file names as `evidence/`, and compares them with the
+BigQuery run line by line (`MATCH` / `DIFF`; exit code 1 on any difference or failed assertion).
+The database stays in `local/output/heyrcg.duckdb` for your own queries, for example:
+
+```bash
+python3 -c "import duckdb; print(duckdb.connect('local/output/heyrcg.duckdb').sql('FROM heyrcg_mart.rpt_monthly_revenue_by_hotel WHERE year_month = \'2024-03\''))"
+```
+
+**How the local run relates to the BigQuery one.** `local/sql/` is a hand port of `definitions/`:
+same tables, same CTE names, same rules, same order of statements in the incremental load, one
+file per Dataform folder (each file names what it ports). Only the dialect changes
+(`FARM_FINGERPRINT` → DuckDB `hash`, `COUNTIF` → `COUNT(*) FILTER`, BigQuery `MERGE` → DuckDB
+`MERGE`). Two things differ by design: surrogate keys and row hashes have other *values*
+(different hash function, still deterministic), so fingerprints are compared run 1 vs run 2 inside
+each engine, not across engines; and the transaction is opened by Python instead of a BigQuery
+script. The Dataform project stays the source of truth; CI runs the local pipeline on every push,
+so the two cannot drift apart silently.
+
+## Run it on BigQuery <a id="how-to-run"></a>
 
 Prerequisites: a GCP project with billing (the BigQuery sandbox does not allow DML, and MERGE is
 DML), Python 3 with `pip install -r requirements.txt`, Google credentials (Cloud Shell: automatic;
@@ -160,6 +207,9 @@ Bookings: 60 delta rows → 1 older than the watermark (BKG-00012) → 59 read �
 14 new versions (8 tier changes + 6 new customers) and 8 updated rows (7 closed versions + 1 Type 1
 phone change). Loading the same delta files again was skipped by the manifest (`evidence/resend.txt`).
 
+The local run (`python3 local/run_local.py`) prints the same tables and compares them with these
+files automatically.
+
 Other checks that run on every execution: `assert_incremental_equals_recompute` (mart = naive
 recompute from staging), `expected_outcomes` (every row in docs/edge_cases.md), SCD2 integrity,
 referential integrity, `assert_nothing_lost`. Processing the delta in the wrong order and then backfilling gives the same
@@ -186,6 +236,36 @@ duplicates.
 | CRM | Tier casing (`gold`, `SILVER`) | | `INITCAP` before comparing |
 
 Full list: [docs/decisions.md](docs/decisions.md) D3–D4.
+
+## Assumptions: what I chose, why, and what the alternative gives <a id="assumptions"></a>
+
+HeyRCG confirmed that these are judgement calls. For each one: the option I would defend to a
+client, why, and, where it changes a number, what the other option gives. The alternative numbers
+are computed by [`local/sql/80_alternatives.sql`](local/sql/80_alternatives.sql) on the mart after
+the increment; `python3 local/run_local.py` prints them and writes the per-hotel version to
+`local/output/assumption_alternatives.csv`. Baselines: **March 2024 room revenue
+11,899,108,379 IDR**, **March 2024 F&B revenue 894,460,500 IDR** (all hotels).
+
+| Id | Question | My choice, and why | The alternative gives |
+|---|---|---|---|
+| K1 | Do reviewers run it themselves? | **Answered by HeyRCG: yes, locally from a fresh clone.** Hence `local/` (above), with the BigQuery outputs kept in `evidence/` for comparison. | n/a |
+| K2 | Which month does room revenue belong to? | **The check-in month.** One booking, one amount, one month: it is how the PMS records a stay, a booking's month only moves if its check-in moves, and a GM can tie every number back to a booking list. | Split by nights in March: **12,323,298,196** (+3.6%). The effect is uneven: Alaya Ubud +7.4%, Komaneka Bisma −1.7%. For a finance month-end the per-night split is the right basis; I would add it as a second view (`fact_booking_nights`), not replace this one. |
+| K3 | Which date picks "the customer version at booking time"? | **Booking `created_at`.** The tier at the moment of booking is what earned the guest's rate and discount (`discount_pct`, `is_loyalty_member` are set then), so "revenue by tier" credits the tier that produced it. | Check-in date: **1 booking** changes tier (BKG-10017: no tier → Bronze, because CUST00001 became Bronze between booking and check-in). No revenue change. |
+| K4 | Is `TotalRevenue_IDR` gross or net of `discount_pct`? | **Use the PMS amount as given** (initial file: gross; delta: net), and derive the 140 empty amounts as gross like the rest of the initial file. Revenue is a financial figure from the system of record; I would rather report it as the PMS states it and flag the inconsistency than recompute 3,000 amounts with a formula nobody confirmed. This is the first question I would settle with HeyRCG. | Everything net (initial amounts × (1 − discount)): **10,437,729,747** (**−12.3%**; every hotel −11% to −14%). Everything gross: **11,900,148,379** (+1,040,000, Mulia only, because most net delta bookings check in after March). Note: the delta's AUD bookings also imply a PMS rate of 10,400 IDR/AUD instead of 10,200; using the PMS amount keeps the PMS's own conversion. |
+| K5 | Do cancelled / no-show bookings count as revenue? | **No: recognised room revenue = 0**, the PMS amount is kept in `room_revenue_idr`. No stay, no room revenue; a cancellation-fee rule can be added later on the kept amount. The delta supports this: the two bookings cancelled there carry a PMS amount of 0, while the 618 cancelled and no-show rows in the initial file still carry the full amount. | Counted at the PMS amount: **14,571,535,753** (**+22.5%**). |
+| K6 | Is "no tier" → Bronze a tier change? | **Yes, a new SCD2 version.** Getting a first tier is the guest joining the programme, an event worth dating: bookings made before it were not member bookings. | As a Type 1 fill: `dim_customer` **815** rows instead of 816, and **4 bookings** of CUST00001 (BKG-00001, BKG-02120, BKG-03036, BKG-10017) would show Bronze instead of no tier. No revenue change. |
+| K7 | Does `completed` mean checked out? | **Yes.** It is the only reading the data supports: all 81 "completed" rows have a check-in on or before the extract date (28 March) and a normal, non-zero amount, like `checked_out` rows. | Quarantined as an unknown status: March **11,531,379,806** (**−3.1%**), 81 bookings out of the mart. |
+| K8 | Is "Nasi goreng spesial" the same item as "Nasi Goreng"? | **No, a separate item** (resolved, decisions D3). | Same price list in this file, so revenue is unchanged; only item-level counts differ. |
+| K9 | "F&B revenue per guest": who is a guest? | **A POS line with a customer_id**: guest F&B ÷ distinct customer_ids on the POS, walk-in sales reported next to it. It uses only what the POS records. A stay-based definition assumes POS customers are in-house guests, and here they mostly are not: in March only 100 of the 784 customer_ids on the POS had a stay at that hotel on that date. | All F&B ÷ in-house guests (customers with a stay in March): **1,010,690** per guest instead of **296,909** (3.4×). With HeyRCG's definition of "guest" this is a one-line change in `rpt_fnb_revenue_per_guest`. |
+
+Other judgement calls in the cleaning that change a number (details in [docs/decisions.md](docs/decisions.md) D3–D4):
+
+| Decision | My choice, and why | The alternative gives |
+|---|---|---|
+| POS dates `NN-NN-YYYY` vs `NN/NN/YYYY` | **Dash = month-first, slash = day-first**, because in this file the first number of every dash date is ≤ 3 while the second goes up to 31, and the reverse for slash dates. | One day-first rule for both: 1,505 lines unparseable and 858 on another day; March F&B **735,903,500** (**−17.7%**). |
+| Check-out before check-in (122 bookings) | **Repair from `nights`** (swap 18, recompute 104), flagged: `nights` always matches rate × nights = revenue, so it is the reliable field. | Quarantine them: March room revenue **11,435,309,760** (**−3.9%**). |
+| Empty revenue (140 bookings) | **Derive rate × nights × the PMS's own exchange rate**, flagged. The rates are the ones the PMS used on every other row. | Quarantine them: March room revenue **11,373,263,824** (**−4.4%**). |
+| POS rows repeated with the same id (340) | **Remove as duplicates**: every repeat is an exact copy of the same line item (asserted), so it is a double export, not a second sale. | Keep them: March F&B **925,880,000** (**+3.5%**). |
 
 ## Modelling decisions (short) <a id="modelling"></a>
 * **Grain**: `fact_bookings` one row per booking (current state, MERGE-updated);
@@ -283,7 +363,9 @@ production deployment. I also asked for all helper scripts in Python instead of 
 **What the AI did:** most of the design, code and checking. It read the brief, profiled the CSV
 files, wrote the edge-case specification, the SQL, the Python scripts and most of this
 documentation, and it caught and fixed its own mistakes along the way (for example, the assertions
-first ran without waiting for the incremental load).
+first ran without waiting for the incremental load). After HeyRCG asked for a local run, it also
+wrote the DuckDB port in `local/` and computed the alternative numbers in the Assumptions section;
+the port checks itself against the BigQuery evidence on every run and in CI.
 
 **What I did:** I ran every step on GCP myself (loading the files, running Dataform, collecting the
 evidence in `evidence/`) and shared the outputs with the assistant, which compared them with the
@@ -291,8 +373,9 @@ expected numbers in `docs/edge_cases.md`. The same expectations are also encoded
 assertions, which all passed. I sent the clarifying questions to HeyRCG.
 
 ## Limitations and what I would do next <a id="limitations"></a>
-* **Assumptions K1–K9 (except K8) are not confirmed** by HeyRCG yet ([docs/decisions.md](docs/decisions.md)).
-  K4 (gross vs net revenue) changes Q1 revenue by about 12% and is the one I would settle first.
+* **Assumptions K2–K9 are my judgement calls** ([Assumptions](#assumptions)), each with the number
+  the alternative would give. K4 (gross vs net revenue, −12.3% on March) is the one I would settle
+  with HeyRCG first.
 * **Revenue is assigned to the check-in month**; a stay over a month end is not split per night.
   A `fact_booking_nights` table (one row per night) would fix that.
 * **The fact keeps the current state of a booking**, not its history (accumulating-snapshot
@@ -300,7 +383,8 @@ assertions, which all passed. I sent the clarifying questions to HeyRCG.
 * **POS has no delta file**, so its incremental path was not exercised; it would follow the bookings
   pattern (dedup on `pos_transaction_id`, MERGE with a guard).
 * **Exchange rates are the PMS's own fixed rates**, used only for 140 empty revenues; no daily FX
-  table.
+  table. The delta's AUD bookings imply 10,400 IDR/AUD instead of 10,200, so the PMS rate does move;
+  a dated FX table would be needed before deriving amounts for new data.
 * **The reference model shares my interpretation of the rules.** It is independent of the SQL
   implementation, not of my assumptions.
 * **The XOR fingerprint** is combined with the row count because two identical rows would cancel
