@@ -1,13 +1,13 @@
 # Dataform project settings.
 # Replace defaultProject with your own GCP project id (or override it in a workflow configuration).
 defaultProject: project-0c6103cc-6451-42d7-a7e
-defaultLocation: asia-southeast2        # Jakarta. Must match the location used in scripts/load_raw.sh
+defaultLocation: asia-southeast2        # Jakarta. Must match the location used in scripts/load_raw.py
 defaultDataset: heyrcg_stg              # staging views live here unless a file says otherwise
 defaultAssertionDataset: heyrcg_assertions
 dataformCoreVersion: 3.1.8
 
 vars:
-  # Dataset that scripts/load_raw.sh loads the CSV files into (not managed by Dataform).
+  # Dataset that scripts/load_raw.py loads the CSV files into (not managed by Dataform).
   raw_dataset: heyrcg_raw
   # Time the initial files were extracted from the source systems. Also the starting watermark.
   snapshot_ts: "2024-03-28 00:00:00"

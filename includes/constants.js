@@ -2,7 +2,7 @@
 const vars = dataform.projectConfig.vars;
 
 module.exports = {
-  RAW: vars.raw_dataset,                       // dataset loaded by scripts/load_raw.sh
+  RAW: vars.raw_dataset,                       // dataset loaded by scripts/load_raw.py
   STG: "heyrcg_stg",
   MART: "heyrcg_mart",
   AUDIT: "heyrcg_audit",

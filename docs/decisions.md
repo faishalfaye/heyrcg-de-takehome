@@ -8,7 +8,7 @@ is a single, easy-to-find place in the code.
 
 | Id | Question | What the code does now | Where to change it |
 |---|---|---|---|
-| K1 | Do reviewers need to run the pipeline themselves? | Repo + `evidence/` outputs; `scripts/run_all.sh` for anyone with a GCP project | n/a |
+| K1 | Do reviewers need to run the pipeline themselves? | Repo + `evidence/` outputs; `scripts/run_all.py` for anyone with a GCP project | n/a |
 | K2 | Which month does room revenue belong to? | Check-in month (a stay crossing a month end is not split) | `rpt_monthly_revenue_by_hotel.sqlx` |
 | K3 | "Customer version valid at booking time": which date? | Booking `created_at` | join conditions on `booking_created_date` |
 | K4 | Is `TotalRevenue_IDR` gross or net of `discount_pct`? Initial rows are gross (= rate × nights × FX for all 3,060 rows with a value); new delta bookings are net | Use the PMS value as is; derive only when empty (gross, like the initial load) | `stg_bookings.sqlx` `room_revenue_idr` |
@@ -19,7 +19,7 @@ is a single, easy-to-find place in the code.
 
 ## D1. Land raw data untouched
 CSV files are loaded with `bq load` with **every source column as STRING and autodetect off**
-(`scripts/load_raw.sh`). Autodetect would silently change data: phone numbers lose their leading
+(`scripts/load_raw.py`). Autodetect would silently change data: phone numbers lose their leading
 zero, `03-15-2024` and `15/03/2024` are guessed with one rule, `"IDR 220,000"` becomes NULL. Each
 row gets `_source_file`, `_source_row` (line number) and `_loaded_at`, so any mart row can be traced
 back to a line of a file. Every file is recorded in `heyrcg_raw.file_manifest` with its MD5:
@@ -133,15 +133,15 @@ whatever order files arrive in. `updated_at` (audit) changes only on a real chan
   model ("Out-of-order + backfill == in-order: True") and by this SQL scenario, which builds a
   second copy of everything with the suffix `_ooo`:
   ```bash
-  ./scripts/split_delta.sh                                   # delta -> a 03-29 file and a 03-31 file
+  python3 scripts/split_delta.py                                   # delta -> a 03-29 file and a 03-31 file
   export RAW_DATASET=heyrcg_raw_ooo DATASET_SUFFIX=_ooo
-  ./scripts/load_raw.sh
+  python3 scripts/load_raw.py
   dataform run --tags initial     --schema-suffix=ooo --vars=raw_dataset=heyrcg_raw_ooo
-  ./scripts/load_raw.sh data/out_of_order/delta_customers_2024-03-31.csv data/out_of_order/delta_bookings_2024-03-31.csv
+  python3 scripts/load_raw.py data/out_of_order/delta_customers_2024-03-31.csv data/out_of_order/delta_bookings_2024-03-31.csv
   dataform run --tags incremental --schema-suffix=ooo --vars=raw_dataset=heyrcg_raw_ooo     # tomorrow's file first
-  ./scripts/load_raw.sh data/out_of_order/delta_customers_2024-03-29.csv data/out_of_order/delta_bookings_2024-03-29.csv
+  python3 scripts/load_raw.py data/out_of_order/delta_customers_2024-03-29.csv data/out_of_order/delta_bookings_2024-03-29.csv
   dataform run --tags incremental --schema-suffix=ooo --vars=raw_dataset=heyrcg_raw_ooo,backfill_from="2024-03-28 00:00:00"
-  ./scripts/fingerprint.sh out_of_order ooo
+  python3 scripts/fingerprint.py out_of_order ooo
   # compare the fp_content column with evidence/fingerprint_after_run1.csv: must be equal
   ```
   Without the backfill step the 03-29 rows stay unapplied (and `assert_incremental_equals_recompute`
@@ -153,7 +153,7 @@ whatever order files arrive in. `updated_at` (audit) changes only on a real chan
 ## D12. Idempotency
 Three layers: (1) loading: same file is skipped by the manifest; (2) the watermark makes a second
 run read nothing; (3) even if rows are re-read (backfill), change detection by hash means nothing is
-rewritten. Proof: `scripts/fingerprint.sh` hashes every row of every mart table, audit columns
+rewritten. Proof: `scripts/fingerprint.py` hashes every row of every mart table, audit columns
 included, after run 1 and run 2; the files must be identical (`evidence/`).
 
 ## D13. Audit columns

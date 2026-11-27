@@ -7,7 +7,7 @@ from daily delta files without rebuilding (watermark + MERGE + SCD Type 2, in on
 
 ```mermaid
 flowchart TD
-    A[CSV initial<br/>data/] --> L[scripts/load_raw.sh<br/>all STRING + file manifest]
+    A[CSV initial<br/>data/] --> L[scripts/load_raw.py<br/>all STRING + file manifest]
     B[CSV delta<br/>2024-04-01] --> L
     L --> R[(heyrcg_raw)]
     R --> I[Dataform tag: initial<br/>staging + first build]
