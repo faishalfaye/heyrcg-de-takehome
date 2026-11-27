@@ -163,7 +163,7 @@ phone change). Loading the same delta files again was skipped by the manifest (`
 Other checks that run on every execution: `assert_incremental_equals_recompute` (mart = naive
 recompute from staging), `expected_outcomes` (every row in docs/edge_cases.md), SCD2 integrity,
 referential integrity, `assert_nothing_lost`. Processing the delta in the wrong order and then backfilling gives the same
-mart as in-order processing (reference model; SQL scenario in [docs/decisions.md D11](docs/decisions.md)).
+mart as in-order processing (shown by the reference model; the SQL scenario in [docs/decisions.md D11](docs/decisions.md) was not run).
 
 ## Data quality: what was dropped, flagged, quarantined <a id="data-quality"></a>
 Nothing disappears silently: `heyrcg_stg.stg_quarantine` lists every row that did not reach the
