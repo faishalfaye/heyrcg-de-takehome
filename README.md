@@ -11,8 +11,8 @@ expectations, against a full recompute, and against an independent Python model.
 All numbers below come from a real run on BigQuery (27 November 2026); the raw outputs are in
 [`evidence/`](evidence/). They match the expectations written before the pipeline was built.
 
-**To run it on your own machine** (no cloud account): `pip install -r local/requirements.txt`, then
-`python3 local/run_local.py`. It runs the same pipeline on DuckDB and checks every number against
+**To run it on your own machine** (no cloud account): in a virtualenv, `pip install -r local/requirements.txt`,
+then `python3 local/run_local.py`. It runs the same pipeline on DuckDB and checks every number against
 `evidence/` ([details](#run-locally)).
 
 ## Contents
@@ -80,6 +80,7 @@ Prerequisites: **Python 3.9 or newer** and git. Nothing else: no cloud account, 
 ```bash
 git clone https://github.com/faishalfaye/heyrcg-de-takehome.git
 cd heyrcg-de-takehome
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r local/requirements.txt      # installs DuckDB, nothing else
 python3 local/run_local.py                 # on Windows: python local\run_local.py
 ```
