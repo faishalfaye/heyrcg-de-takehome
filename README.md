@@ -70,7 +70,7 @@ Any error rolls everything back.
 | `definitions/tests/` | Assertions, including `expected_outcomes.sqlx` |
 | `includes/` | `scd2.js` (the one SCD2 definition) and constants |
 | `tests/reference/` | Independent Python model used as an oracle (also runs in CI) |
-| `docs/` | `edge_cases.md` (the spec), `decisions.md` (why, and open assumptions K1–K9) |
+| `docs/` | `edge_cases.md` (the spec), `decisions.md` (why, and assumptions K1–K9) |
 | `evidence/` | Outputs of a real run: fingerprints, revenue before/after, run log, quarantine summary |
 
 ## Run it locally (one command, no cloud) <a id="run-locally"></a>
@@ -233,7 +233,7 @@ duplicates.
 | Bookings | Empty revenue | 140 | Rate × nights × PMS exchange rate, flagged |
 | Bookings | `is_loyalty_member` in 7 forms | | TRUE / FALSE / NULL |
 | CRM | Duplicate `customer_id` (only email differs) | 50 | One kept: valid email, most complete, then deterministic |
-| CRM | Broken emails | 63 | Repaired where safe (inner space → `.`), otherwise NULL + flag |
+| CRM | Invalid emails | 63 | Set to NULL and flagged (161 others only needed cleaning: trim, lowercase, inner space → `.`) |
 | CRM | Tier casing (`gold`, `SILVER`) | | `INITCAP` before comparing |
 
 Full list: [docs/decisions.md](docs/decisions.md) D3–D4.
@@ -322,9 +322,9 @@ and isolate big backfills (a temporary larger capacity or off-peak window).
 > While building your new revenue reports we noticed something about discounts. In the booking
 > data we received for January to March, the room revenue is the full room price: discounts given
 > to guests have not been taken off. In the newest update from your booking system, discounts are
-> taken off, and one older booking was even re-sent with its discount removed.
+> taken off.
 >
-> For Bisma Eight this matters: guests received about IDR 640 million in discounts in January to
+> For Bisma Eight this matters: guests received about IDR 680 million in discounts in January to
 > March, roughly 12% of room revenue. If those discounts were really given, your Q1 room revenue
 > is about 12% lower than the figure you may have seen, and Q1 and Q2 are not comparable until we
 > fix it.
