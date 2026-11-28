@@ -30,18 +30,19 @@ All numbers below come from a real run on BigQuery (27 November 2026); the raw o
 
 ## Architecture <a id="architecture"></a>
 
-```mermaid
-flowchart TD
-    A[CSV initial<br/>data/] --> L[scripts/load_raw.py<br/>all STRING + file manifest]
-    B[CSV delta<br/>2024-04-01] --> L
-    L --> R[(heyrcg_raw)]
-    R --> I[Dataform tag: initial<br/>staging + first build]
-    R --> N[Dataform tag: incremental<br/>one transaction, MERGE]
-    I --> M[(heyrcg_mart + heyrcg_audit<br/>dims, facts, watermark)]
-    N --> M
-    M --> T[Assertions<br/>expected outcomes, recompute]
-    M --> P[Reports<br/>revenue by hotel, F&B per guest]
-```
+![Architecture: CSV files are loaded into BigQuery, cleaned by Dataform into a Kimball mart, and updated daily by one incremental transaction](docs/architecture.svg)
+
+1. **Source files**: the four initial CSV files and the 1 April delta (bookings + customers).
+2. **`scripts/load_raw.py`** lands each file as-is (every column STRING) with lineage columns and an MD5 manifest, so a resent file is skipped.
+3. **BigQuery** holds four datasets.
+4. **Dataform** runs the SQL: tag `initial` builds everything from raw, tag `incremental` applies a delta in one transaction (watermark + MERGE).
+5. **`heyrcg_raw`**: rows exactly as received.
+6. **`heyrcg_stg`**: cleaned and standardized views, `ref_*` mapping tables, `stg_quarantine`.
+7. **`heyrcg_mart`**: the star schema (`dim_customer` SCD2, `dim_hotel`, `dim_date`, `fact_bookings`, `fact_pos_transactions`) and the `rpt_*` report views.
+8. **`heyrcg_audit`**: watermark per source, the append-only customer change log, the run log.
+9. **Assertions**: five checks after every run (SCD2 validity, integrity, nothing lost, incremental = recompute, expected outcomes).
+10. **GitHub Actions CI**: on every push, Dataform compile, the independent Python reference model, and the local run.
+11. **Local run**: `python3 local/run_local.py` runs the same SQL on DuckDB and compares its numbers with `evidence/`.
 
 **Incremental run, inside one BigQuery transaction**
 (`definitions/incremental/incremental_load.sqlx`): delta rows newer than the watermark →

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 690" width="1200" height="690">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#80868B"/></marker></defs>
+<rect width="1200" height="690" rx="16" fill="#FFFFFF"/>
+<rect x="0" y="0" width="1200" height="62" rx="16" fill="#4285F4"/><rect x="0" y="40" width="1200" height="22" fill="#4285F4"/>
+<text x="600.0" y="38" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#FFFFFF" text-anchor="middle">HeyRCG take-home: raw CSV files to a Kimball mart in BigQuery, kept current by a daily incremental MERGE</text>
+<rect x="40" y="110" width="230" height="330" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="40" cy="110" r="13" fill="#F9AB00"/>
+<text x="40" y="115" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">1</text>
+<text x="60" y="140" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">Source files (CSV)</text>
+<path d="M60 165 h18 l8 8 v26 h-26 z" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M78 165 v8 h8" fill="none" stroke="#4285F4" stroke-width="1.6"/><path d="M65 181 h16 M65 187 h16 M65 193 h10" stroke="#4285F4" stroke-width="1.4"/>
+<text x="100" y="180" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#202124" text-anchor="start">PMS bookings</text>
+<text x="100" y="197" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">raw_bookings.csv</text>
+<path d="M60 231 h18 l8 8 v26 h-26 z" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M78 231 v8 h8" fill="none" stroke="#4285F4" stroke-width="1.6"/><path d="M65 247 h16 M65 253 h16 M65 259 h10" stroke="#4285F4" stroke-width="1.4"/>
+<text x="100" y="246" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#202124" text-anchor="start">CRM customers</text>
+<text x="100" y="263" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">raw_customers.csv</text>
+<path d="M60 297 h18 l8 8 v26 h-26 z" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M78 297 v8 h8" fill="none" stroke="#4285F4" stroke-width="1.6"/><path d="M65 313 h16 M65 319 h16 M65 325 h10" stroke="#4285F4" stroke-width="1.4"/>
+<text x="100" y="312" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#202124" text-anchor="start">POS F&amp;B lines</text>
+<text x="100" y="329" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">raw_pos_transactions.csv</text>
+<path d="M60 363 h18 l8 8 v26 h-26 z" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M78 363 v8 h8" fill="none" stroke="#4285F4" stroke-width="1.6"/><path d="M65 379 h16 M65 385 h16 M65 391 h10" stroke="#4285F4" stroke-width="1.4"/>
+<text x="100" y="378" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#202124" text-anchor="start">Daily delta, 1 April</text>
+<text x="100" y="395" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">bookings + customers</text>
+<path d="M270 275 H298" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="300" y="205" width="170" height="140" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="300" cy="205" r="13" fill="#F9AB00"/>
+<text x="300" y="210" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">2</text>
+<rect x="368" y="220" width="34" height="28" rx="4" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M375 229 l6 5 l-6 5 M384 240 h10" fill="none" stroke="#4285F4" stroke-width="1.8" stroke-linecap="round"/>
+<text x="385" y="272" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle">load_raw.py</text>
+<text x="385" y="292" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">every column as STRING</text>
+<text x="385" y="310" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">lineage + MD5 manifest</text>
+<text x="385" y="328" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">resend = skipped</text>
+<path d="M470 275 H498" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="500" y="92" width="660" height="478" rx="10" fill="#F8F9FA" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="1160" cy="92" r="13" fill="#F9AB00"/>
+<text x="1160" y="97" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">3</text>
+<path d="M524 120 a6 6 0 0 1 2 -11 a8 8 0 0 1 15 -1 a6 6 0 0 1 3 12 z" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.5"/>
+<text x="552" y="120" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">Google Cloud  ·  BigQuery</text>
+<rect x="530" y="140" width="600" height="66" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="530" cy="140" r="13" fill="#F9AB00"/>
+<text x="530" y="145" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">4</text>
+<rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(0 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(45 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(90 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(135 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(180 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(225 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(270 562 173)"/><rect x="559" y="156" width="6" height="8" rx="1" fill="#4285F4" transform="rotate(315 562 173)"/><circle cx="562" cy="173" r="11" fill="#E8F0FE" stroke="#4285F4" stroke-width="2"/><circle cx="562" cy="173" r="4" fill="#4285F4"/>
+<text x="592" y="166" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">Dataform  (SQL workflows in Git)</text>
+<text x="592" y="188" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">tag initial: build everything from raw   ·   tag incremental: one transaction, watermark + MERGE</text>
+<path d="M830 206 V236" fill="none" stroke="#80868B" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<rect x="530" y="240" width="180" height="160" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="530" cy="240" r="13" fill="#F9AB00"/>
+<text x="530" y="245" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">5</text>
+<path d="M604 257 v22 a16 5 0 0 0 32 0 v-22" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><ellipse cx="620" cy="257" rx="16" ry="5" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M604 268 a16 5 0 0 0 32 0" fill="none" stroke="#4285F4" stroke-width="1.2"/>
+<text x="620" y="306" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle">heyrcg_raw</text>
+<text x="620" y="326" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">rows exactly as received</text>
+<text x="620" y="344" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">+ file_manifest</text>
+<rect x="740" y="240" width="180" height="160" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="740" cy="240" r="13" fill="#F9AB00"/>
+<text x="740" y="245" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">6</text>
+<path d="M814 257 v22 a16 5 0 0 0 32 0 v-22" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><ellipse cx="830" cy="257" rx="16" ry="5" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M814 268 a16 5 0 0 0 32 0" fill="none" stroke="#4285F4" stroke-width="1.2"/>
+<text x="830" y="306" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle">heyrcg_stg</text>
+<text x="830" y="326" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">cleaned, standardized</text>
+<text x="830" y="344" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">ref_* mapping tables</text>
+<text x="830" y="362" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">stg_quarantine</text>
+<rect x="950" y="240" width="180" height="160" rx="10" fill="#FFFFFF" stroke="#4285F4" stroke-width="2"/>
+<circle cx="950" cy="240" r="13" fill="#F9AB00"/>
+<text x="950" y="245" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">7</text>
+<path d="M1024 257 v22 a16 5 0 0 0 32 0 v-22" fill="#D2E3FC" stroke="#4285F4" stroke-width="1.6"/><ellipse cx="1040" cy="257" rx="16" ry="5" fill="#D2E3FC" stroke="#4285F4" stroke-width="1.6"/><path d="M1024 268 a16 5 0 0 0 32 0" fill="none" stroke="#4285F4" stroke-width="1.2"/>
+<text x="1040" y="306" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="middle">heyrcg_mart</text>
+<text x="1040" y="326" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">dim_customer (SCD2)</text>
+<text x="1040" y="344" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">dim_hotel · dim_date</text>
+<text x="1040" y="362" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">fact_bookings · fact_pos</text>
+<text x="1040" y="380" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="middle">rpt_* report views</text>
+<path d="M710 320 H738" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M920 320 H948" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="740" y="440" width="180" height="110" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="740" cy="440" r="13" fill="#F9AB00"/>
+<text x="740" y="445" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">8</text>
+<path d="M764 457 v22 a16 5 0 0 0 32 0 v-22" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><ellipse cx="780" cy="457" rx="16" ry="5" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M764 468 a16 5 0 0 0 32 0" fill="none" stroke="#4285F4" stroke-width="1.2"/>
+<text x="808" y="470" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">heyrcg_audit</text>
+<text x="762" y="502" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">etl_watermark</text>
+<text x="762" y="518" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">customer_change_log</text>
+<text x="762" y="534" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">etl_run_log</text>
+<path d="M830 400 V438" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M920 495 H935 V372 H948" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="950" y="440" width="180" height="110" rx="10" fill="#FFFFFF" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="950" cy="440" r="13" fill="#F9AB00"/>
+<text x="950" y="445" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">9</text>
+<path d="M990 452 l14 5 v10 c0 9 -6 15 -14 18 c-8 -3 -14 -9 -14 -18 v-10 z" fill="#E6F4EA" stroke="#34A853" stroke-width="1.6"/><path d="M984 468 l4 4 l8 -9" fill="none" stroke="#34A853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1014" y="472" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">Assertions</text>
+<text x="970" y="502" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">5 checks, all pass</text>
+<text x="970" y="518" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">SCD2 · integrity</text>
+<text x="970" y="534" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">recompute · expected</text>
+<path d="M1040 400 V438" fill="none" stroke="#80868B" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="40" y="600" width="545" height="62" rx="10" fill="#F8F9FA" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="40" cy="600" r="13" fill="#F9AB00"/>
+<text x="40" y="605" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">10</text>
+<circle cx="68" cy="620" r="4" fill="none" stroke="#4285F4" stroke-width="1.8"/><circle cx="68" cy="642" r="4" fill="none" stroke="#4285F4" stroke-width="1.8"/><circle cx="84" cy="626" r="4" fill="none" stroke="#4285F4" stroke-width="1.8"/><path d="M68 624 v14 M84 630 c0 8 -16 4 -16 8" fill="none" stroke="#4285F4" stroke-width="1.8"/>
+<text x="102" y="626" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">GitHub repo + Actions CI</text>
+<text x="102" y="646" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">on every push: Dataform compile · Python reference model · local run</text>
+<rect x="615" y="600" width="545" height="62" rx="10" fill="#F8F9FA" stroke="#DADCE0" stroke-width="1.2"/>
+<circle cx="615" cy="600" r="13" fill="#F9AB00"/>
+<text x="615" y="605" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">11</text>
+<rect x="635" y="617" width="34" height="28" rx="4" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/><path d="M642 626 l6 5 l-6 5 M651 637 h10" fill="none" stroke="#4285F4" stroke-width="1.8" stroke-linecap="round"/>
+<text x="682" y="626" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#202124" text-anchor="start">Local run: python3 local/run_local.py</text>
+<text x="682" y="646" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">same SQL on DuckDB, numbers compared with evidence/ (BigQuery run)</text>
+</svg>
